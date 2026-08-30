@@ -3,12 +3,17 @@
  *
  * IMPORTANT:
  * Weather data logic lives in weatherService.js.
- * This file ONLY controls the application UI.
+ * Map logic lives in mapService.js.
+ * AI logic lives in gptEngine.js.
  *
- * Do NOT declare:
+ * This file ONLY coordinates the application UI.
+ *
+ * DO NOT declare:
  *   - POPULAR_INDIAN_LOCATIONS
  *   - WMO_CODE_MAP
  *   - WeatherService
+ *   - map implementation
+ *   - GPT implementation
  */
 
 const appState = {
@@ -20,11 +25,14 @@ const appState = {
   },
 
   weatherData: null,
+
   activePersona: "kisan",
+
   currentLang: "en",
+
   activeTab: "overview",
-  chartInstance: null,
-  chatInitialized: false
+
+  chartInstance: null
 };
 
 
@@ -38,14 +46,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 async function initApp() {
-  try {
 
-    /*
-     * IMPORTANT:
-     * Initialize the chat immediately.
-     * It must NOT depend on weather API loading.
-     */
-    setupChat();
+  try {
 
     setupEventListeners();
 
@@ -53,16 +55,16 @@ async function initApp() {
       lucide.createIcons();
     }
 
-    /*
-     * Render the initial Copilot message immediately.
-     */
-    renderInitialCopilotMessage();
 
-    /*
-     * weatherService.js must already be loaded.
-     */
+    /* -------------------------------------------------------
+       WEATHER SERVICE CHECK
+       ------------------------------------------------------- */
+
     if (!window.weatherService) {
-      console.error("WeatherService is not available.");
+
+      console.error(
+        "WeatherService is not available."
+      );
 
       showNotification(
         "Weather service failed to load.",
@@ -72,9 +74,11 @@ async function initApp() {
       return;
     }
 
-    /*
-     * Load initial weather.
-     */
+
+    /* -------------------------------------------------------
+       LOAD INITIAL WEATHER
+       ------------------------------------------------------- */
+
     await loadWeather(
       appState.currentLocation.lat,
       appState.currentLocation.lon,
@@ -82,27 +86,23 @@ async function initApp() {
       appState.currentLocation.state
     );
 
-    /*
-     * Initialize map after weather data is available.
-     */
-    if (window.mapService) {
-      try {
-        window.mapService.initMap(
-          "weather-map",
-          appState.currentLocation.lat,
-          appState.currentLocation.lon,
-          appState.currentLocation.name,
-          appState.weatherData
-        );
-      } catch (error) {
-        console.warn(
-          "Initial map initialization failed:",
-          error
-        );
-      }
-    }
 
-  } catch (error) {
+    /* -------------------------------------------------------
+       INITIALIZE / SYNCHRONIZE MAP
+       ------------------------------------------------------- */
+
+    syncMapToCurrentLocation();
+
+
+    /* -------------------------------------------------------
+       INITIAL COPILOT MESSAGE
+       ------------------------------------------------------- */
+
+    renderInitialCopilotMessage();
+
+  }
+
+  catch (error) {
 
     console.error(
       "WeatherGPT initialization failed:",
@@ -118,73 +118,227 @@ async function initApp() {
 
 
 /* =========================================================
-   CHAT INITIALIZATION
+   MAP SYNCHRONIZATION
    ========================================================= */
 
-function getChatMessagesContainer() {
+/**
+ * IMPORTANT:
+ *
+ * mapService.js exposes:
+ *
+ *   initialize()
+ *   initializeFullMap()
+ *   updateLocation(name, state, lat, lon, temperature)
+ *
+ * It does NOT expose initMap().
+ *
+ * This helper keeps app.js connected to the actual map API.
+ */
 
-  /*
-   * Primary ID used by the application.
-   */
-  let container =
-    document.getElementById("chat-messages");
+function syncMapToCurrentLocation() {
 
-  if (container) {
-    return container;
-  }
-
-  /*
-   * Fallbacks make the app more tolerant of small
-   * HTML naming differences.
-   */
-  const fallbackSelectors = [
-    "#copilot-messages",
-    "#messages-container",
-    ".chat-messages",
-    ".copilot-messages"
-  ];
-
-  for (const selector of fallbackSelectors) {
-
-    container =
-      document.querySelector(selector);
-
-    if (container) {
-      return container;
-    }
-  }
-
-  return null;
-}
-
-
-function setupChat() {
-
-  const chatMessages =
-    getChatMessagesContainer();
-
-  if (!chatMessages) {
+  if (!window.mapService) {
 
     console.warn(
-      "Chat message container not found."
+      "mapService is not available."
     );
 
     return;
   }
 
-  /*
-   * Make sure the message area is actually visible.
-   */
-  chatMessages.classList.remove("hidden");
 
-  chatMessages.style.display = "";
+  const location =
+    appState.currentLocation;
 
-  /*
-   * Give the chat area a predictable scrolling behavior.
-   * Existing CSS still controls the actual dimensions.
-   */
-  if (!chatMessages.style.overflowY) {
-    chatMessages.style.overflowY = "auto";
+  const weather =
+    appState.weatherData;
+
+
+  const temperature =
+    weather?.current?.temp;
+
+
+  try {
+
+    /* -------------------------------------------------------
+       MAIN MAP
+       ------------------------------------------------------- */
+
+    if (
+      typeof window.mapService.initialize ===
+      "function"
+    ) {
+
+      window.mapService.initialize();
+    }
+
+
+    /*
+     * mapService.updateLocation signature:
+     *
+     * updateLocation(
+     *   name,
+     *   state,
+     *   lat,
+     *   lon,
+     *   temperature
+     * )
+     */
+
+    if (
+      typeof window.mapService.updateLocation ===
+      "function"
+    ) {
+
+      window.mapService.updateLocation(
+        location.name,
+        location.state,
+        location.lat,
+        location.lon,
+        temperature
+      );
+    }
+
+
+    /* -------------------------------------------------------
+       FULL / RADAR MAP
+       ------------------------------------------------------- */
+
+    if (
+      typeof window.mapService.initializeFullMap ===
+      "function"
+    ) {
+
+      const fullMapElement =
+        document.getElementById(
+          "weather-map-full"
+        );
+
+      /*
+       * Only initialize the full map if the element
+       * actually exists.
+       */
+
+      if (fullMapElement) {
+
+        window.mapService.initializeFullMap();
+      }
+    }
+
+  }
+
+  catch (error) {
+
+    console.warn(
+      "Map synchronization failed:",
+      error
+    );
+  }
+}
+
+
+/**
+ * Synchronize both maps after a location change.
+ */
+function updateMapsForLocation() {
+
+  if (!window.mapService) {
+    return;
+  }
+
+
+  const location =
+    appState.currentLocation;
+
+  const weather =
+    appState.weatherData;
+
+
+  const temperature =
+    weather?.current?.temp;
+
+
+  try {
+
+    if (
+      typeof window.mapService.initialize ===
+      "function"
+    ) {
+
+      window.mapService.initialize();
+    }
+
+
+    if (
+      typeof window.mapService.updateLocation ===
+      "function"
+    ) {
+
+      /*
+       * CORRECT ARGUMENT ORDER
+       *
+       * name
+       * state
+       * lat
+       * lon
+       * temperature
+       */
+
+      window.mapService.updateLocation(
+        location.name,
+        location.state,
+        location.lat,
+        location.lon,
+        temperature
+      );
+    }
+
+
+    /*
+     * If the radar/full map exists, initialize it too.
+     */
+
+    const fullMapElement =
+      document.getElementById(
+        "weather-map-full"
+      );
+
+    if (
+      fullMapElement &&
+      typeof window.mapService.initializeFullMap ===
+      "function"
+    ) {
+
+      window.mapService.initializeFullMap();
+
+      /*
+       * updateLocation updates both mainMap and fullMap
+       * inside mapService.js.
+       */
+
+      if (
+        typeof window.mapService.updateLocation ===
+        "function"
+      ) {
+
+        window.mapService.updateLocation(
+          location.name,
+          location.state,
+          location.lat,
+          location.lon,
+          temperature
+        );
+      }
+    }
+
+  }
+
+  catch (error) {
+
+    console.warn(
+      "Map location update failed:",
+      error
+    );
   }
 }
 
@@ -195,118 +349,201 @@ function setupChat() {
 
 function setupEventListeners() {
 
-  /* -------------------------------------------------------
+
+  /* =======================================================
      TAB SWITCHING
-     ------------------------------------------------------- */
+     ======================================================= */
 
   const tabs =
-    document.querySelectorAll(".tab-pill");
+    document.querySelectorAll(
+      ".tab-pill"
+    );
+
 
   tabs.forEach(tab => {
 
-    tab.addEventListener("click", () => {
+    tab.addEventListener(
+      "click",
+      () => {
 
-      tabs.forEach(t => {
-        t.classList.remove("active");
-      });
+        tabs.forEach(t => {
 
-      tab.classList.add("active");
+          t.classList.remove(
+            "active"
+          );
 
-      const tabId =
-        tab.getAttribute("data-tab");
-
-      appState.activeTab =
-        tabId;
-
-      document
-        .querySelectorAll(".tab-panel")
-        .forEach(panel => {
-          panel.classList.add("hidden");
         });
 
-      const targetPanel =
-        document.getElementById(
-          `tab-${tabId}`
+
+        tab.classList.add(
+          "active"
         );
 
-      if (targetPanel) {
-        targetPanel.classList.remove("hidden");
-      }
 
-      /*
-       * Reinitialize Leaflet when changing map tabs.
-       */
-      if (
-        tabId === "radar" &&
-        window.mapService &&
-        appState.weatherData
-      ) {
+        const tabId =
+          tab.getAttribute(
+            "data-tab"
+          );
 
-        setTimeout(() => {
 
-          try {
+        appState.activeTab =
+          tabId;
 
-            window.mapService.initMap(
-              "weather-map-full",
-              appState.currentLocation.lat,
-              appState.currentLocation.lon,
-              appState.currentLocation.name,
-              appState.weatherData
+
+        document
+          .querySelectorAll(
+            ".tab-panel"
+          )
+          .forEach(panel => {
+
+            panel.classList.add(
+              "hidden"
             );
 
-          } catch (error) {
+          });
 
-            console.warn(
-              "Radar map initialization failed:",
-              error
-            );
-          }
 
-        }, 150);
+        const targetPanel =
+          document.getElementById(
+            `tab-${tabId}`
+          );
+
+
+        if (targetPanel) {
+
+          targetPanel.classList.remove(
+            "hidden"
+          );
+        }
+
+
+        /* -------------------------------------------------
+           RADAR MAP
+           ------------------------------------------------- */
+
+        if (
+          tabId === "radar" &&
+          window.mapService
+        ) {
+
+          setTimeout(
+            () => {
+
+              try {
+
+                if (
+                  typeof window.mapService.initializeFullMap ===
+                  "function"
+                ) {
+
+                  window.mapService.initializeFullMap();
+                }
+
+
+                updateMapsForLocation();
+
+
+                /*
+                 * Leaflet sometimes needs a size refresh
+                 * after its container becomes visible.
+                 */
+
+                if (
+                  typeof window.mapService.invalidateSize ===
+                  "function"
+                ) {
+
+                  window.mapService.invalidateSize();
+                }
+
+              }
+
+              catch (error) {
+
+                console.warn(
+                  "Radar map initialization failed:",
+                  error
+                );
+              }
+
+            },
+            150
+          );
+        }
+
+
+        /* -------------------------------------------------
+           OVERVIEW MAP
+           ------------------------------------------------- */
+
+        else if (
+          tabId === "overview" &&
+          window.mapService
+        ) {
+
+          setTimeout(
+            () => {
+
+              try {
+
+                if (
+                  typeof window.mapService.initialize ===
+                  "function"
+                ) {
+
+                  window.mapService.initialize();
+                }
+
+
+                updateMapsForLocation();
+
+
+                if (
+                  typeof window.mapService.invalidateSize ===
+                  "function"
+                ) {
+
+                  window.mapService.invalidateSize();
+                }
+
+              }
+
+              catch (error) {
+
+                console.warn(
+                  "Overview map initialization failed:",
+                  error
+                );
+              }
+
+            },
+            150
+          );
+        }
+
+
+        if (
+          typeof lucide !== "undefined"
+        ) {
+
+          lucide.createIcons();
+        }
+
       }
+    );
 
-      else if (
-        tabId === "overview" &&
-        window.mapService &&
-        appState.weatherData
-      ) {
-
-        setTimeout(() => {
-
-          try {
-
-            window.mapService.initMap(
-              "weather-map",
-              appState.currentLocation.lat,
-              appState.currentLocation.lon,
-              appState.currentLocation.name,
-              appState.weatherData
-            );
-
-          } catch (error) {
-
-            console.warn(
-              "Overview map initialization failed:",
-              error
-            );
-          }
-
-        }, 150);
-      }
-
-      if (typeof lucide !== "undefined") {
-        lucide.createIcons();
-      }
-    });
   });
 
 
-  /* -------------------------------------------------------
+  /* =======================================================
      LANGUAGE SWITCHER
-     ------------------------------------------------------- */
+     ======================================================= */
 
   const langSelect =
-    document.getElementById("lang-select");
+    document.getElementById(
+      "lang-select"
+    );
+
 
   if (langSelect) {
 
@@ -317,8 +554,10 @@ function setupEventListeners() {
         appState.currentLang =
           event.target.value;
 
+
         if (
-          typeof setLanguage === "function"
+          typeof setLanguage ===
+          "function"
         ) {
 
           setLanguage(
@@ -326,70 +565,116 @@ function setupEventListeners() {
           );
         }
 
-        if (appState.weatherData) {
+
+        if (
+          appState.weatherData
+        ) {
 
           updateWeatherUI(
             appState.weatherData
           );
         }
+
       }
     );
+
   }
 
 
-  /* -------------------------------------------------------
+  /* =======================================================
      PERSONA SWITCHER
-     ------------------------------------------------------- */
+     ======================================================= */
 
   const personaChips =
-    document.querySelectorAll(".persona-chip");
+    document.querySelectorAll(
+      ".persona-chip"
+    );
+
 
   personaChips.forEach(chip => {
 
-    chip.addEventListener("click", () => {
+    chip.addEventListener(
+      "click",
+      () => {
 
-      personaChips.forEach(button => {
-        button.classList.remove("active");
-      });
+        personaChips.forEach(button => {
 
-      chip.classList.add("active");
+          button.classList.remove(
+            "active"
+          );
 
-      const persona =
-        chip.getAttribute("data-persona");
+        });
 
-      appState.activePersona =
-        persona;
 
-      if (
-        window.gptEngine &&
-        typeof window.gptEngine.setPersona === "function"
-      ) {
+        chip.classList.add(
+          "active"
+        );
 
-        window.gptEngine.setPersona(
+
+        const persona =
+          chip.getAttribute(
+            "data-persona"
+          );
+
+
+        appState.activePersona =
+          persona;
+
+
+        if (
+          window.gptEngine &&
+          typeof window.gptEngine.setPersona ===
+          "function"
+        ) {
+
+          try {
+
+            window.gptEngine.setPersona(
+              persona
+            );
+
+          }
+
+          catch (error) {
+
+            console.warn(
+              "Could not update GPT persona:",
+              error
+            );
+          }
+
+        }
+
+
+        triggerPersonaContextUpdate(
           persona
         );
-      }
 
-      triggerPersonaContextUpdate(
-        persona
-      );
-    });
+      }
+    );
+
   });
 
 
-  /* -------------------------------------------------------
+  /* =======================================================
      LOCATION SEARCH
-     ------------------------------------------------------- */
+     ======================================================= */
 
   const searchInput =
-    document.getElementById("search-input");
+    document.getElementById(
+      "search-input"
+    );
+
 
   const dropdown =
     document.getElementById(
       "autocomplete-dropdown"
     );
 
-  let debounceTimer = null;
+
+  let debounceTimer =
+    null;
+
 
   if (searchInput) {
 
@@ -401,17 +686,25 @@ function setupEventListeners() {
           debounceTimer
         );
 
+
         const value =
           event.target.value.trim();
 
-        if (value.length < 2) {
+
+        if (
+          value.length < 2
+        ) {
 
           if (dropdown) {
-            dropdown.classList.add("hidden");
+
+            dropdown.classList.add(
+              "hidden"
+            );
           }
 
           return;
         }
+
 
         debounceTimer =
           setTimeout(
@@ -419,43 +712,133 @@ function setupEventListeners() {
 
               try {
 
-                if (!window.weatherService) {
+                if (
+                  !window.weatherService ||
+                  typeof window.weatherService.searchLocation !==
+                  "function"
+                ) {
+
+                  console.warn(
+                    "Location search service unavailable."
+                  );
+
                   return;
                 }
+
 
                 const results =
                   await window.weatherService.searchLocation(
                     value
                   );
 
+
                 renderAutocomplete(
                   results
                 );
 
-              } catch (error) {
+              }
+
+              catch (error) {
 
                 console.error(
                   "Location search failed:",
                   error
                 );
+
+                if (dropdown) {
+
+                  dropdown.classList.add(
+                    "hidden"
+                  );
+                }
+
               }
 
             },
             250
           );
+
       }
     );
+
   }
 
 
-  /* -------------------------------------------------------
+  /* =======================================================
+     SEARCH ENTER KEY
+     ======================================================= */
+
+  if (searchInput) {
+
+    searchInput.addEventListener(
+      "keydown",
+      event => {
+
+        if (
+          event.key !== "Enter"
+        ) {
+
+          return;
+        }
+
+
+        event.preventDefault();
+
+
+        const firstResult =
+          document.querySelector(
+            "#autocomplete-dropdown .autocomplete-item"
+          );
+
+
+        /*
+         * If autocomplete has a result,
+         * select the first one.
+         */
+
+        if (firstResult) {
+
+          firstResult.click();
+
+          return;
+        }
+
+
+        /*
+         * Otherwise try a direct location search.
+         */
+
+        const value =
+          searchInput.value.trim();
+
+
+        if (
+          value.length >= 2 &&
+          window.weatherService &&
+          typeof window.weatherService.searchLocation ===
+          "function"
+        ) {
+
+          searchLocationAndLoad(
+            value
+          );
+        }
+
+      }
+    );
+
+  }
+
+
+  /* =======================================================
      GEOLOCATION
-     ------------------------------------------------------- */
+     ======================================================= */
 
   const geoBtn =
     document.getElementById(
       "geolocate-btn"
     );
+
 
   if (geoBtn) {
 
@@ -466,21 +849,26 @@ function setupEventListeners() {
   }
 
 
-  /* -------------------------------------------------------
+  /* =======================================================
      CHAT FORM
-     ------------------------------------------------------- */
+     ======================================================= */
 
   const chatForm =
     document.getElementById(
       "chat-form"
     );
 
+
   const chatInput =
     document.getElementById(
       "chat-input"
     );
 
-  if (chatForm && chatInput) {
+
+  if (
+    chatForm &&
+    chatInput
+  ) {
 
     chatForm.addEventListener(
       "submit",
@@ -488,50 +876,40 @@ function setupEventListeners() {
 
         event.preventDefault();
 
+
         const value =
           chatInput.value.trim();
 
+
         if (!value) {
+
           return;
         }
+
 
         handleUserChatMessage(
           value
         );
 
-        chatInput.value = "";
+
+        chatInput.value =
+          "";
+
       }
     );
 
-    /*
-     * Also support Enter key naturally.
-     */
-    chatInput.addEventListener(
-      "keydown",
-      event => {
-
-        if (
-          event.key === "Enter" &&
-          !event.shiftKey
-        ) {
-
-          event.preventDefault();
-
-          chatForm.requestSubmit();
-        }
-      }
-    );
   }
 
 
-  /* -------------------------------------------------------
+  /* =======================================================
      VOICE BUTTON
-     ------------------------------------------------------- */
+     ======================================================= */
 
   const voiceBtn =
     document.getElementById(
       "voice-btn"
     );
+
 
   if (voiceBtn) {
 
@@ -542,17 +920,21 @@ function setupEventListeners() {
         toggleVoiceInput(
           chatInput
         );
+
       }
     );
+
   }
 
 
-  /* -------------------------------------------------------
+  /* =======================================================
      QUICK QUESTIONS
-     ------------------------------------------------------- */
+     ======================================================= */
 
   document
-    .querySelectorAll(".quick-chip")
+    .querySelectorAll(
+      ".quick-chip"
+    )
     .forEach(chip => {
 
       chip.addEventListener(
@@ -560,8 +942,8 @@ function setupEventListeners() {
         () => {
 
           const question =
-            chip.getAttribute("data-question") ||
             chip.textContent.trim();
+
 
           if (question) {
 
@@ -569,29 +951,34 @@ function setupEventListeners() {
               question
             );
           }
+
         }
       );
+
     });
 
 
-  /* -------------------------------------------------------
+  /* =======================================================
      DOSSIER MODAL
-     ------------------------------------------------------- */
+     ======================================================= */
 
   const dossierBtn =
     document.getElementById(
       "export-dossier-btn"
     );
 
+
   const dossierModal =
     document.getElementById(
       "dossier-modal"
     );
 
+
   const closeDossierBtn =
     document.getElementById(
       "close-dossier-btn"
     );
+
 
   if (
     dossierBtn &&
@@ -607,9 +994,12 @@ function setupEventListeners() {
         dossierModal.classList.remove(
           "hidden"
         );
+
       }
     );
+
   }
+
 
   if (
     closeDossierBtn &&
@@ -623,65 +1013,86 @@ function setupEventListeners() {
         dossierModal.classList.add(
           "hidden"
         );
+
       }
     );
+
   }
 
 
-  /* -------------------------------------------------------
+  /* =======================================================
      SETTINGS MODAL
-     ------------------------------------------------------- */
+     ======================================================= */
 
   const settingsModal =
     document.getElementById(
       "settings-modal"
     );
 
+
   const openSettings = () => {
 
     if (settingsModal) {
+
       settingsModal.classList.remove(
         "hidden"
       );
     }
+
   };
+
 
   const closeSettings = () => {
 
     if (settingsModal) {
+
       settingsModal.classList.add(
         "hidden"
       );
     }
+
   };
 
 
   document
-    .getElementById("settings-btn")
+    .getElementById(
+      "settings-btn"
+    )
     ?.addEventListener(
       "click",
       openSettings
     );
 
+
   document
-    .getElementById("settings-btn-mob")
+    .getElementById(
+      "settings-btn-mob"
+    )
     ?.addEventListener(
       "click",
       openSettings
     );
 
+
   document
-    .getElementById("close-settings-btn")
+    .getElementById(
+      "close-settings-btn"
+    )
     ?.addEventListener(
       "click",
       closeSettings
     );
 
 
+  /* =======================================================
+     SAVE AI SETTINGS
+     ======================================================= */
+
   const saveSettingsBtn =
     document.getElementById(
       "save-settings-btn"
     );
+
 
   if (saveSettingsBtn) {
 
@@ -691,7 +1102,8 @@ function setupEventListeners() {
 
         if (
           !window.gptEngine ||
-          typeof window.gptEngine.setApiConfig !== "function"
+          typeof window.gptEngine.setApiConfig !==
+          "function"
         ) {
 
           showNotification(
@@ -702,27 +1114,154 @@ function setupEventListeners() {
           return;
         }
 
+
         const provider =
           document.getElementById(
             "provider-select"
           )?.value || "";
+
 
         const apiKey =
           document.getElementById(
             "api-key-input"
           )?.value.trim() || "";
 
-        window.gptEngine.setApiConfig(
-          provider,
-          apiKey
-        );
 
-        closeSettings();
+        try {
 
-        showNotification(
-          "Settings saved successfully."
-        );
+          window.gptEngine.setApiConfig(
+            provider,
+            apiKey
+          );
+
+
+          closeSettings();
+
+
+          showNotification(
+            "Settings saved successfully."
+          );
+
+        }
+
+        catch (error) {
+
+          console.error(
+            "Saving AI settings failed:",
+            error
+          );
+
+
+          showNotification(
+            "Could not save AI settings.",
+            "error"
+          );
+        }
+
       }
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   SEARCH LOCATION AND LOAD
+   ========================================================= */
+
+async function searchLocationAndLoad(
+  query
+) {
+
+  try {
+
+    if (
+      !window.weatherService ||
+      typeof window.weatherService.searchLocation !==
+      "function"
+    ) {
+
+      throw new Error(
+        "Location search service unavailable."
+      );
+    }
+
+
+    const results =
+      await window.weatherService.searchLocation(
+        query
+      );
+
+
+    if (
+      !results ||
+      results.length === 0
+    ) {
+
+      showNotification(
+        "No matching location found.",
+        "error"
+      );
+
+      return;
+    }
+
+
+    const location =
+      results[0];
+
+
+    const lat =
+      Number(location.lat);
+
+
+    const lon =
+      Number(location.lon);
+
+
+    const name =
+      location.name ||
+      query;
+
+
+    const state =
+      location.state ||
+      location.admin1 ||
+      "";
+
+
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon)
+    ) {
+
+      throw new Error(
+        "Search returned invalid coordinates."
+      );
+    }
+
+
+    await loadWeather(
+      lat,
+      lon,
+      name,
+      state
+    );
+
+  }
+
+  catch (error) {
+
+    console.error(
+      "Direct location search failed:",
+      error
+    );
+
+
+    showNotification(
+      "Could not load that location.",
+      "error"
     );
   }
 }
@@ -732,31 +1271,66 @@ function setupEventListeners() {
    CITY LOADING
    ========================================================= */
 
-window.loadCity = async function (
-  name,
-  state,
-  lat,
-  lon
-) {
-
-  const searchInput =
-    document.getElementById(
-      "search-input"
-    );
-
-  if (searchInput) {
-
-    searchInput.value =
-      `${name}, ${state}`;
-  }
-
-  await loadWeather(
-    lat,
-    lon,
+window.loadCity =
+  async function (
     name,
-    state
-  );
-};
+    state,
+    lat,
+    lon
+  ) {
+
+    const numericLat =
+      Number(lat);
+
+
+    const numericLon =
+      Number(lon);
+
+
+    if (
+      !Number.isFinite(numericLat) ||
+      !Number.isFinite(numericLon)
+    ) {
+
+      console.error(
+        "Invalid city coordinates:",
+        {
+          name,
+          state,
+          lat,
+          lon
+        }
+      );
+
+      showNotification(
+        "Invalid location coordinates.",
+        "error"
+      );
+
+      return;
+    }
+
+
+    const searchInput =
+      document.getElementById(
+        "search-input"
+      );
+
+
+    if (searchInput) {
+
+      searchInput.value =
+        `${name}, ${state}`;
+    }
+
+
+    await loadWeather(
+      numericLat,
+      numericLon,
+      name,
+      state
+    );
+  };
 
 
 /* =========================================================
@@ -769,30 +1343,64 @@ window.loadWeatherByCoords =
     lon
   ) {
 
+    const numericLat =
+      Number(lat);
+
+
+    const numericLon =
+      Number(lon);
+
+
+    if (
+      !Number.isFinite(numericLat) ||
+      !Number.isFinite(numericLon)
+    ) {
+
+      showNotification(
+        "Invalid coordinates.",
+        "error"
+      );
+
+      return;
+    }
+
+
     let name =
-      `District (${lat.toFixed(2)}°, ${lon.toFixed(2)}°)`;
+      `District (${numericLat.toFixed(2)}°, ${numericLon.toFixed(2)}°)`;
+
 
     let state =
       "India";
+
+
+    /*
+     * Open-Meteo geocoding attempt.
+     *
+     * NOTE:
+     * This is only a best-effort lookup.
+     */
 
     try {
 
       const url =
         `https://geocoding-api.open-meteo.com/v1/search` +
         `?name=${encodeURIComponent(
-          `${lat.toFixed(2)},${lon.toFixed(2)}`
+          `${numericLat.toFixed(2)},${numericLon.toFixed(2)}`
         )}` +
         `&count=1` +
         `&language=en` +
         `&format=json`;
 
+
       const response =
         await fetch(url);
+
 
       if (response.ok) {
 
         const data =
           await response.json();
+
 
         if (
           data.results &&
@@ -803,6 +1411,7 @@ window.loadWeatherByCoords =
             data.results[0].name ||
             name;
 
+
           state =
             data.results[0].admin1 ||
             data.results[0].country ||
@@ -810,7 +1419,9 @@ window.loadWeatherByCoords =
         }
       }
 
-    } catch (error) {
+    }
+
+    catch (error) {
 
       console.warn(
         "Coordinate geocoding unavailable:",
@@ -818,10 +1429,12 @@ window.loadWeatherByCoords =
       );
     }
 
+
     const searchInput =
       document.getElementById(
         "search-input"
       );
+
 
     if (searchInput) {
 
@@ -829,9 +1442,10 @@ window.loadWeatherByCoords =
         `${name}, ${state}`;
     }
 
+
     await loadWeather(
-      lat,
-      lon,
+      numericLat,
+      numericLon,
       name,
       state
     );
@@ -844,7 +1458,9 @@ window.loadWeatherByCoords =
 
 function handleGeolocation() {
 
-  if (!navigator.geolocation) {
+  if (
+    !navigator.geolocation
+  ) {
 
     showNotification(
       "Geolocation is not supported by this browser.",
@@ -854,10 +1470,12 @@ function handleGeolocation() {
     return;
   }
 
+
   const geoBtn =
     document.getElementById(
       "geolocate-btn"
     );
+
 
   if (geoBtn) {
 
@@ -865,7 +1483,8 @@ function handleGeolocation() {
       "opacity-50"
     );
 
-    geoBtn.disabled = true;
+    geoBtn.disabled =
+      true;
   }
 
 
@@ -879,8 +1498,10 @@ function handleGeolocation() {
           "opacity-50"
         );
 
-        geoBtn.disabled = false;
+        geoBtn.disabled =
+          false;
       }
+
 
       await loadWeather(
         position.coords.latitude,
@@ -888,7 +1509,9 @@ function handleGeolocation() {
         "Your Location",
         "Local Area"
       );
+
     },
+
 
     error => {
 
@@ -898,25 +1521,36 @@ function handleGeolocation() {
           "opacity-50"
         );
 
-        geoBtn.disabled = false;
+        geoBtn.disabled =
+          false;
       }
+
 
       console.warn(
         "Geolocation error:",
         error
       );
 
+
       showNotification(
         "Could not retrieve your location.",
         "error"
       );
+
     },
 
+
     {
-      enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 300000
+      enableHighAccuracy:
+        true,
+
+      timeout:
+        10000,
+
+      maximumAge:
+        300000
     }
+
   );
 }
 
@@ -932,24 +1566,65 @@ async function loadWeather(
   state
 ) {
 
-  showLoader(true);
+  showLoader(
+    true
+  );
+
 
   try {
 
-    if (!window.weatherService) {
+    const numericLat =
+      Number(lat);
+
+
+    const numericLon =
+      Number(lon);
+
+
+    if (
+      !Number.isFinite(numericLat) ||
+      !Number.isFinite(numericLon)
+    ) {
+
+      throw new Error(
+        "Invalid latitude/longitude."
+      );
+    }
+
+
+    if (
+      !window.weatherService
+    ) {
 
       throw new Error(
         "WeatherService is unavailable."
       );
     }
 
+
+    if (
+      typeof window.weatherService.fetchWeather !==
+      "function"
+    ) {
+
+      throw new Error(
+        "weatherService.fetchWeather() is unavailable."
+      );
+    }
+
+
+    /* -------------------------------------------------------
+       FETCH WEATHER
+       ------------------------------------------------------- */
+
     const data =
       await window.weatherService.fetchWeather(
-        lat,
-        lon,
+        numericLat,
+        numericLon,
         name,
         state
       );
+
 
     if (!data) {
 
@@ -958,58 +1633,94 @@ async function loadWeather(
       );
     }
 
+
+    /* -------------------------------------------------------
+       UPDATE APP STATE
+       ------------------------------------------------------- */
+
     appState.weatherData =
       data;
 
+
     appState.currentLocation = {
-      name,
-      state,
-      lat,
-      lon
+
+      name:
+        name ||
+        data.location?.name ||
+        "Selected Location",
+
+      state:
+        state ||
+        data.location?.state ||
+        "",
+
+      lat:
+        numericLat,
+
+      lon:
+        numericLon
     };
+
+
+    /* -------------------------------------------------------
+       UPDATE SEARCH BAR
+       ------------------------------------------------------- */
+
+    const searchInput =
+      document.getElementById(
+        "search-input"
+      );
+
+
+    if (searchInput) {
+
+      searchInput.value =
+        `${appState.currentLocation.name}, ${appState.currentLocation.state}`;
+    }
+
+
+    /* -------------------------------------------------------
+       UPDATE WEATHER UI
+       ------------------------------------------------------- */
 
     updateWeatherUI(
       data
     );
 
-    /*
-     * Update map.
-     */
-    if (window.mapService) {
 
-      try {
+    /* -------------------------------------------------------
+       UPDATE MAP
+       ------------------------------------------------------- */
 
-        window.mapService.updateLocation(
-          lat,
-          lon,
-          name,
-          data
-        );
+    updateMapsForLocation();
 
-      } catch (mapError) {
 
-        console.warn(
-          "Map update failed:",
-          mapError
-        );
-      }
-    }
+  }
 
-  } catch (error) {
+  catch (error) {
 
     console.error(
       "Load weather failed:",
       error
     );
 
+
+    /*
+     * Keep the previous weather data if a new request fails.
+     */
+
     showNotification(
       "Error updating weather observations.",
       "error"
     );
 
-  } finally {
+  }
 
-    showLoader(false);
+  finally {
+
+    showLoader(
+      false
+    );
   }
 }
 
@@ -1027,9 +1738,12 @@ function renderAutocomplete(
       "autocomplete-dropdown"
     );
 
+
   if (!dropdown) {
+
     return;
   }
+
 
   if (
     !results ||
@@ -1043,6 +1757,7 @@ function renderAutocomplete(
     return;
   }
 
+
   dropdown.innerHTML =
     results
       .map(location => {
@@ -1052,31 +1767,57 @@ function renderAutocomplete(
             location.name
           );
 
+
         const state =
           escapeHtml(
-            location.state || ""
+            location.state ||
+            location.admin1 ||
+            location.country ||
+            ""
           );
+
+
+        const lat =
+          Number(
+            location.lat
+          );
+
+
+        const lon =
+          Number(
+            location.lon
+          );
+
 
         return `
           <div
             class="autocomplete-item"
-            data-lat="${Number(location.lat)}"
-            data-lon="${Number(location.lon)}"
+            data-lat="${lat}"
+            data-lon="${lon}"
             data-name="${name}"
             data-state="${state}"
           >
+
             <div>
+
               <span
                 class="font-bold text-white text-xs sm:text-sm"
               >
                 ${name}
               </span>
 
-              <span
-                class="text-xs text-slate-400 ml-1"
-              >
-                (${state})
-              </span>
+              ${
+                state
+                  ? `
+                    <span
+                      class="text-xs text-slate-400 ml-1"
+                    >
+                      (${state})
+                    </span>
+                  `
+                  : ""
+              }
+
             </div>
 
             <span
@@ -1084,10 +1825,12 @@ function renderAutocomplete(
             >
               Select →
             </span>
+
           </div>
         `;
       })
       .join("");
+
 
   dropdown
     .querySelectorAll(
@@ -1100,25 +1843,54 @@ function renderAutocomplete(
         async () => {
 
           const lat =
-            parseFloat(
+            Number(
               item.dataset.lat
             );
 
+
           const lon =
-            parseFloat(
+            Number(
               item.dataset.lon
             );
 
+
           const name =
-            item.dataset.name;
+            item.dataset.name ||
+            "Selected Location";
+
 
           const state =
-            item.dataset.state;
+            item.dataset.state ||
+            "";
+
+
+          if (
+            !Number.isFinite(lat) ||
+            !Number.isFinite(lon)
+          ) {
+
+            console.error(
+              "Autocomplete item contains invalid coordinates:",
+              {
+                lat,
+                lon
+              }
+            );
+
+            showNotification(
+              "Selected location has invalid coordinates.",
+              "error"
+            );
+
+            return;
+          }
+
 
           const searchInput =
             document.getElementById(
               "search-input"
             );
+
 
           if (searchInput) {
 
@@ -1126,9 +1898,27 @@ function renderAutocomplete(
               `${name}, ${state}`;
           }
 
+
           dropdown.classList.add(
             "hidden"
           );
+
+
+          /*
+           * THIS IS THE IMPORTANT CONNECTION:
+           *
+           * Search result
+           *      ↓
+           * coordinates
+           *      ↓
+           * loadWeather()
+           *      ↓
+           * appState.currentLocation
+           *      ↓
+           * updateMapsForLocation()
+           *      ↓
+           * Leaflet map moves
+           */
 
           await loadWeather(
             lat,
@@ -1136,9 +1926,12 @@ function renderAutocomplete(
             name,
             state
           );
+
         }
       );
+
     });
+
 
   dropdown.classList.remove(
     "hidden"
@@ -1147,7 +1940,7 @@ function renderAutocomplete(
 
 
 /* =========================================================
-   CLOSE AUTOCOMPLETE
+   CLOSE AUTOCOMPLETE WHEN CLICKING OUTSIDE
    ========================================================= */
 
 document.addEventListener(
@@ -1159,14 +1952,18 @@ document.addEventListener(
         "autocomplete-dropdown"
       );
 
+
     const searchInput =
       document.getElementById(
         "search-input"
       );
 
+
     if (
       dropdown &&
-      !dropdown.contains(event.target) &&
+      !dropdown.contains(
+        event.target
+      ) &&
       event.target !== searchInput
     ) {
 
@@ -1174,6 +1971,7 @@ document.addEventListener(
         "hidden"
       );
     }
+
   }
 );
 
@@ -1187,83 +1985,105 @@ function updateWeatherUI(
 ) {
 
   if (!data) {
+
     return;
   }
 
-  const setText = (
-    id,
-    value
-  ) => {
 
-    const element =
-      document.getElementById(id);
+  const setText =
+    (
+      id,
+      value
+    ) => {
 
-    if (element) {
-      element.textContent =
-        value ?? "--";
-    }
-  };
+      const element =
+        document.getElementById(
+          id
+        );
 
 
-  /* HERO */
+      if (element) {
+
+        element.textContent =
+          value;
+      }
+
+    };
+
+
+  /* =======================================================
+     HERO
+     ======================================================= */
 
   setText(
     "loc-name",
-    data.location?.name
+    data.location?.name || "--"
   );
+
 
   setText(
     "loc-state",
-    data.location?.state
+    data.location?.state || "--"
   );
+
 
   setText(
     "current-temp",
     `${data.current?.temp ?? "--"}°C`
   );
 
+
   setText(
     "val-feels-like",
     `${data.current?.feelsLike ?? "--"}°C`
   );
+
 
   setText(
     "val-today-max",
     `${data.current?.todayMax ?? "--"}°`
   );
 
+
   setText(
     "val-today-min",
     `${data.current?.todayMin ?? "--"}°`
   );
 
+
   setText(
     "current-condition",
-    data.current?.condition
+    data.current?.condition || "--"
   );
+
 
   setText(
     "current-icon",
-    data.current?.icon
+    data.current?.icon || "🌤️"
   );
 
 
-  /* MAIN METRICS */
+  /* =======================================================
+     MAIN METRICS
+     ======================================================= */
 
   setText(
     "val-humidity",
     `${data.current?.humidity ?? "--"}%`
   );
 
+
   setText(
     "val-wind",
     `${data.current?.windSpeed ?? "--"}`
   );
 
+
   setText(
     "val-uv",
     `${data.current?.uvIndex ?? "--"}`
   );
+
 
   setText(
     "val-aqi",
@@ -1271,48 +2091,59 @@ function updateWeatherUI(
   );
 
 
-  /* WIND ROSE */
+  /* =======================================================
+     WIND ROSE
+     ======================================================= */
 
   const needle =
     document.getElementById(
       "compass-needle"
     );
 
+
   if (
     needle &&
-    data.current
+    Number.isFinite(
+      Number(
+        data.current?.windDirection
+      )
+    )
   ) {
 
     needle.style.transform =
-      `rotate(${Number(
-        data.current.windDirection || 0
-      )}deg)`;
+      `rotate(${data.current.windDirection}deg)`;
   }
+
 
   setText(
     "val-wind-cardinal",
-    data.current?.windCardinal
+    data.current?.windCardinal || "--"
   );
+
 
   setText(
     "val-wind-speed-main",
-    data.current?.windSpeed
+    data.current?.windSpeed ?? "--"
   );
+
 
   setText(
     "val-wind-gusts",
     `${data.current?.windGusts ?? "--"} km/h`
   );
 
+
   setText(
     "val-wind-deg",
     `${data.current?.windDirection ?? "--"}°`
   );
 
+
   setText(
     "val-pressure-num",
     `${data.current?.pressure ?? "--"} hPa`
   );
+
 
   setText(
     "val-barometer-trend",
@@ -1322,10 +2153,13 @@ function updateWeatherUI(
   );
 
 
-  /* RAIN */
+  /* =======================================================
+     RAIN
+     ======================================================= */
 
   const rainProbability =
     data.hourly?.[0]?.rainProb ?? 0;
+
 
   setText(
     "val-rain-prob",
@@ -1333,17 +2167,21 @@ function updateWeatherUI(
   );
 
 
-  /* SUN */
+  /* =======================================================
+     SUN
+     ======================================================= */
 
   setText(
     "val-sunrise-time",
     data.sun?.sunrise || "--"
   );
 
+
   setText(
     "val-sunset-time",
     data.sun?.sunset || "--"
   );
+
 
   setText(
     "val-daylight-dur",
@@ -1357,6 +2195,7 @@ function updateWeatherUI(
     document.getElementById(
       "sun-arc-marker"
     );
+
 
   if (
     sunMarker &&
@@ -1374,9 +2213,12 @@ function updateWeatherUI(
         )
       );
 
+
     const cx =
       15 +
-      p * 170;
+      p *
+      (185 - 15);
+
 
     const cy =
       70 -
@@ -1385,10 +2227,12 @@ function updateWeatherUI(
       (1 - p) *
       60;
 
+
     sunMarker.setAttribute(
       "cx",
       cx.toFixed(1)
     );
+
 
     sunMarker.setAttribute(
       "cy",
@@ -1397,54 +2241,79 @@ function updateWeatherUI(
   }
 
 
-  /* MAP COORDINATES */
+  /* =======================================================
+     MAP COORDINATES
+     ======================================================= */
 
   const coordBadge =
     document.getElementById(
       "map-coord-badge"
     );
 
+
   if (
     coordBadge &&
     data.location
   ) {
 
-    const latDir =
-      Number(data.location.lat) >= 0
-        ? "N"
-        : "S";
+    const latitude =
+      Number(
+        data.location.lat
+      );
 
-    const lonDir =
-      Number(data.location.lon) >= 0
-        ? "E"
-        : "W";
 
-    coordBadge.textContent =
-      `${Math.abs(
-        Number(data.location.lat)
-      ).toFixed(2)}° ${latDir}, ` +
-      `${Math.abs(
-        Number(data.location.lon)
-      ).toFixed(2)}° ${lonDir}`;
+    const longitude =
+      Number(
+        data.location.lon
+      );
+
+
+    if (
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude)
+    ) {
+
+      const latDir =
+        latitude >= 0
+          ? "N"
+          : "S";
+
+
+      const lonDir =
+        longitude >= 0
+          ? "E"
+          : "W";
+
+
+      coordBadge.textContent =
+        `${Math.abs(latitude).toFixed(2)}° ${latDir}, ` +
+        `${Math.abs(longitude).toFixed(2)}° ${lonDir}`;
+    }
+
   }
 
 
-  /* IMD ALERT */
+  /* =======================================================
+     IMD ALERT
+     ======================================================= */
 
   const ribbon =
     document.getElementById(
       "imd-alert-ribbon"
     );
 
+
   const alertTitle =
     document.getElementById(
       "alert-title"
     );
 
+
   const alertDesc =
     document.getElementById(
       "alert-desc"
     );
+
 
   if (
     ribbon &&
@@ -1454,10 +2323,12 @@ function updateWeatherUI(
   ) {
 
     alertTitle.textContent =
-      `IMD Status: ${data.imdAlert.title || ""}`;
+      `IMD Status: ${data.imdAlert.title || "Normal"}`;
+
 
     alertDesc.textContent =
       data.imdAlert.desc || "";
+
 
     ribbon.className =
       `mb-5 p-4 rounded-2xl border ` +
@@ -1466,12 +2337,15 @@ function updateWeatherUI(
   }
 
 
-  /* SPRAY BADGE */
+  /* =======================================================
+     SPRAY BADGE
+     ======================================================= */
 
   const badgeSpray =
     document.getElementById(
       "badge-spray"
     );
+
 
   if (
     badgeSpray &&
@@ -1488,8 +2362,12 @@ function updateWeatherUI(
             data-lucide="check-circle-2"
             class="w-3.5 h-3.5"
           ></i>
-          <span>Spraying Safe</span>
+
+          <span>
+            Spraying Safe
+          </span>
         `;
+
 
       badgeSpray.className =
         "text-xs font-semibold px-3 py-1.5 rounded-full " +
@@ -1497,7 +2375,9 @@ function updateWeatherUI(
         "border border-emerald-500/40 " +
         "flex items-center gap-1.5";
 
-    } else {
+    }
+
+    else {
 
       badgeSpray.innerHTML =
         `
@@ -1505,8 +2385,12 @@ function updateWeatherUI(
             data-lucide="alert-circle"
             class="w-3.5 h-3.5"
           ></i>
-          <span>Avoid Spraying</span>
+
+          <span>
+            Avoid Spraying
+          </span>
         `;
+
 
       badgeSpray.className =
         "text-xs font-semibold px-3 py-1.5 rounded-full " +
@@ -1517,7 +2401,9 @@ function updateWeatherUI(
   }
 
 
-  /* IRRIGATION */
+  /* =======================================================
+     IRRIGATION
+     ======================================================= */
 
   setText(
     "val-irrigation",
@@ -1527,103 +2413,132 @@ function updateWeatherUI(
   );
 
 
-  /* SPRAY MATRIX */
+  /* =======================================================
+     SPRAY MATRIX
+     ======================================================= */
 
   const sprayGrid =
     document.getElementById(
       "spray-matrix-grid"
     );
 
+
   if (
     sprayGrid &&
-    Array.isArray(data.sprayMatrix)
+    Array.isArray(
+      data.sprayMatrix
+    )
   ) {
 
     sprayGrid.innerHTML =
       data.sprayMatrix
-        .map(slot => `
-          <div
-            class="spray-slot ${escapeHtml(
-              slot.status || ""
-            )}"
-          >
-            <span
-              class="font-bold text-[11px]"
-            >
-              ${escapeHtml(slot.time)}
-            </span>
+        .map(slot => {
 
-            <span
-              class="text-xs font-extrabold my-1 font-num"
-            >
-              ${escapeHtml(slot.temp)}°C
-            </span>
-
+          return `
             <div
-              class="text-[10px] opacity-80 flex flex-col items-center"
+              class="spray-slot ${escapeHtml(
+                slot.status
+              )}"
             >
-              <span>
-                💨 ${escapeHtml(slot.wind)}km/h
+
+              <span
+                class="font-bold text-[11px]"
+              >
+                ${escapeHtml(slot.time)}
               </span>
 
-              <span>
-                💧 ${escapeHtml(slot.rainProb)}%
+              <span
+                class="text-xs font-extrabold my-1 font-num"
+              >
+                ${slot.temp ?? "--"}°C
               </span>
+
+              <div
+                class="text-[10px] opacity-80 flex flex-col items-center"
+              >
+
+                <span>
+                  💨 ${slot.wind ?? "--"}km/h
+                </span>
+
+                <span>
+                  💧 ${slot.rainProb ?? "--"}%
+                </span>
+
+              </div>
+
+              <span
+                class="text-[10px] font-bold mt-1 uppercase tracking-tight"
+              >
+                ${escapeHtml(
+                  slot.statusLabel
+                )}
+              </span>
+
             </div>
+          `;
 
-            <span
-              class="text-[10px] font-bold mt-1 uppercase tracking-tight"
-            >
-              ${escapeHtml(slot.statusLabel)}
-            </span>
-          </div>
-        `)
+        })
         .join("");
   }
 
 
-  /* AGRICULTURE */
+  /* =======================================================
+     AGRICULTURE
+     ======================================================= */
 
   setText(
     "val-evapo",
-    data.agriculture?.evapotranspirationRate
+    data.agriculture?.evapotranspirationRate ??
+      "--"
   );
+
 
   setText(
     "val-disease-risk",
-    data.agriculture?.diseaseRisk
+    data.agriculture?.diseaseRisk ??
+      "--"
   );
 
 
-  /* AQI */
+  /* =======================================================
+     AQI / POLLUTANTS
+     ======================================================= */
 
-  if (data.aqi?.pollutants) {
+  if (
+    data.aqi?.pollutants
+  ) {
 
     setText(
       "val-pm25",
-      data.aqi.pollutants.pm25
+      data.aqi.pollutants.pm25 ?? "--"
     );
+
 
     setText(
       "val-pm10",
-      data.aqi.pollutants.pm10
+      data.aqi.pollutants.pm10 ?? "--"
     );
+
 
     setText(
       "val-no2",
-      data.aqi.pollutants.no2
+      data.aqi.pollutants.no2 ?? "--"
     );
+
 
     setText(
       "val-so2",
-      data.aqi.pollutants.so2
+      data.aqi.pollutants.so2 ?? "--"
     );
+
 
     setText(
       "val-o3",
-      data.aqi.pollutants.o3
+      data.aqi.pollutants.o3 ?? "--"
     );
   }
+
 
   setText(
     "val-aqi-full-advice",
@@ -1631,12 +2546,15 @@ function updateWeatherUI(
   );
 
 
-  /* SOLAR */
+  /* =======================================================
+     SOLAR
+     ======================================================= */
 
   setText(
     "val-solar-potential",
     `${data.solar?.potentialPercent ?? 0}%`
   );
+
 
   setText(
     "val-solar-kwh",
@@ -1644,18 +2562,28 @@ function updateWeatherUI(
   );
 
 
-  /* FORECAST */
+  /* =======================================================
+     7-DAY FORECAST
+     ======================================================= */
 
   render7DaySpectrum(
     data.daily
   );
+
+
+  /* =======================================================
+     24-HOUR CHART
+     ======================================================= */
 
   render24hChart(
     data.hourly
   );
 
 
-  if (typeof lucide !== "undefined") {
+  if (
+    typeof lucide !== "undefined"
+  ) {
+
     lucide.createIcons();
   }
 }
@@ -1674,67 +2602,100 @@ function render7DaySpectrum(
       "forecast-7d-spectrum"
     );
 
+
   if (
     !container ||
     !Array.isArray(days)
   ) {
+
     return;
   }
 
+
   container.innerHTML =
     days
-      .map(day => `
-        <div
-          class="flex items-center justify-between gap-3 text-xs py-1 border-b border-slate-800/40 last:border-0"
-        >
-          <span
-            class="font-bold text-slate-300 w-16"
-          >
-            ${escapeHtml(day.dayName)}
-          </span>
+      .map(day => {
 
-          <span
-            class="text-xl w-7 text-center"
-          >
-            ${escapeHtml(day.icon)}
-          </span>
-
+        return `
           <div
-            class="flex items-center gap-1 text-[11px] text-sky-400 w-12"
+            class="flex items-center justify-between gap-3 text-xs py-1 border-b border-slate-800/40 last:border-0"
           >
-            <span>💧</span>
-            <span>${escapeHtml(day.rainProb)}%</span>
-          </div>
 
-          <div
-            class="temp-bar-container"
-          >
             <span
-              class="font-mono text-slate-400 text-[11px] w-6 text-right"
+              class="font-bold text-slate-300 w-16"
             >
-              ${escapeHtml(day.minTemp)}°
+              ${escapeHtml(
+                day.dayName
+              )}
             </span>
+
+
+            <span
+              class="text-xl w-7 text-center"
+            >
+              ${escapeHtml(
+                day.icon
+              )}
+            </span>
+
 
             <div
-              class="temp-bar-bg"
+              class="flex items-center gap-1 text-[11px] text-sky-400 w-12"
             >
-              <div
-                class="temp-bar-fill"
-                style="
-                  left: ${Number(day.barLeft) || 0}%;
-                  width: ${Number(day.barWidth) || 0}%;
-                "
-              ></div>
+
+              <span>
+                💧
+              </span>
+
+              <span>
+                ${day.rainProb ?? 0}%
+              </span>
+
             </div>
 
-            <span
-              class="font-mono text-white font-bold text-[11px] w-6 text-left"
+
+            <div
+              class="temp-bar-container"
             >
-              ${escapeHtml(day.maxTemp)}°
-            </span>
+
+              <span
+                class="font-mono text-slate-400 text-[11px] w-6 text-right"
+              >
+                ${day.minTemp ?? "--"}°
+              </span>
+
+
+              <div
+                class="temp-bar-bg"
+              >
+
+                <div
+                  class="temp-bar-fill"
+                  style="
+                    left: ${Number(
+                      day.barLeft ?? 0
+                    )}%;
+                    width: ${Number(
+                      day.barWidth ?? 0
+                    )}%;
+                  "
+                ></div>
+
+              </div>
+
+
+              <span
+                class="font-mono text-white font-bold text-[11px] w-6 text-left"
+              >
+                ${day.maxTemp ?? "--"}°
+              </span>
+
+            </div>
+
           </div>
-        </div>
-      `)
+        `;
+
+      })
       .join("");
 }
 
@@ -1752,15 +2713,19 @@ function render24hChart(
       "forecastChart"
     );
 
+
   if (
     !canvas ||
     !Array.isArray(hourly)
   ) {
+
     return;
   }
 
+
   if (
-    typeof Chart === "undefined"
+    typeof Chart ===
+    "undefined"
   ) {
 
     console.warn(
@@ -1770,11 +2735,18 @@ function render24hChart(
     return;
   }
 
-  if (appState.chartInstance) {
+
+  if (
+    appState.chartInstance
+  ) {
 
     try {
+
       appState.chartInstance.destroy();
-    } catch (error) {
+
+    }
+
+    catch (error) {
 
       console.warn(
         "Previous chart could not be destroyed:",
@@ -1782,16 +2754,23 @@ function render24hChart(
       );
     }
 
+
     appState.chartInstance =
       null;
   }
 
+
   const ctx =
-    canvas.getContext("2d");
+    canvas.getContext(
+      "2d"
+    );
+
 
   if (!ctx) {
+
     return;
   }
+
 
   const gradient =
     ctx.createLinearGradient(
@@ -1801,104 +2780,141 @@ function render24hChart(
       220
     );
 
+
   gradient.addColorStop(
     0,
     "rgba(56, 189, 248, 0.4)"
   );
+
 
   gradient.addColorStop(
     1,
     "rgba(56, 189, 248, 0.0)"
   );
 
+
   appState.chartInstance =
     new Chart(
       ctx,
       {
-        type: "line",
+
+        type:
+          "line",
+
 
         data: {
 
           labels:
             hourly.map(
-              item => item.time
+              item =>
+                item.time
             ),
+
 
           datasets: [
 
             {
+
               label:
                 "Temperature (°C)",
 
+
               data:
                 hourly.map(
-                  item => item.temp
+                  item =>
+                    item.temp
                 ),
+
 
               borderColor:
                 "#38bdf8",
 
+
               backgroundColor:
                 gradient,
+
 
               fill:
                 true,
 
+
               tension:
                 0.35,
+
 
               pointRadius:
                 2,
 
+
               pointHoverRadius:
                 5,
+
 
               pointBackgroundColor:
                 "#7dd3fc",
 
+
               yAxisID:
                 "y"
+
             },
 
+
             {
+
               type:
                 "bar",
+
 
               label:
                 "Rain Probability (%)",
 
+
               data:
                 hourly.map(
-                  item => item.rainProb
+                  item =>
+                    item.rainProb
                 ),
+
 
               backgroundColor:
                 "rgba(99, 102, 241, 0.4)",
 
+
               borderRadius:
                 4,
 
+
               yAxisID:
                 "y1"
+
             }
+
           ]
+
         },
+
 
         options: {
 
           responsive:
             true,
 
+
           maintainAspectRatio:
             false,
 
+
           interaction: {
+
             mode:
               "index",
 
             intersect:
               false
+
           },
+
 
           plugins: {
 
@@ -1910,14 +2926,19 @@ function render24hChart(
                   "#94a3b8",
 
                 font: {
+
                   size:
                     10,
 
                   family:
                     "Plus Jakarta Sans"
+
                 }
+
               }
+
             },
+
 
             tooltip: {
 
@@ -1931,9 +2952,22 @@ function render24hChart(
                 1,
 
               padding:
-                10
+                10,
+
+              titleFont: {
+
+                size:
+                  12,
+
+                weight:
+                  "bold"
+
+              }
+
             }
+
           },
+
 
           scales: {
 
@@ -1945,19 +2979,27 @@ function render24hChart(
                   "#64748b",
 
                 font: {
+
                   size:
                     9
+
                 },
 
                 maxTicksLimit:
                   8
+
               },
 
+
               grid: {
+
                 color:
                   "rgba(255,255,255,0.03)"
+
               }
+
             },
+
 
             y: {
 
@@ -1967,16 +3009,24 @@ function render24hChart(
                   "#94a3b8",
 
                 font: {
+
                   size:
                     10
+
                 }
+
               },
 
+
               grid: {
+
                 color:
                   "rgba(255,255,255,0.04)"
+
               }
+
             },
+
 
             y1: {
 
@@ -1989,24 +3039,35 @@ function render24hChart(
               max:
                 100,
 
+
               ticks: {
 
                 color:
                   "#818cf8",
 
                 font: {
+
                   size:
                     10
+
                 }
+
               },
 
+
               grid: {
+
                 drawOnChartArea:
                   false
+
               }
+
             }
+
           }
+
         }
+
       }
     );
 }
@@ -2021,47 +3082,67 @@ async function handleUserChatMessage(
 ) {
 
   const chatMessages =
-    getChatMessagesContainer();
+    document.getElementById(
+      "chat-messages"
+    );
+
 
   if (!chatMessages) {
-
-    console.error(
-      "Chat container not found."
-    );
-
-    showNotification(
-      "Chat interface could not be initialized.",
-      "error"
-    );
 
     return;
   }
 
-  /*
-   * Make sure the chat area is visible.
-   */
-  chatMessages.classList.remove("hidden");
-  chatMessages.style.display = "";
 
   appendMessage(
     "user",
     userText
   );
 
+
   const typingId =
     appendTypingIndicator();
 
+
   try {
 
+    /* -------------------------------------------------------
+       GPT ENGINE CHECK
+       ------------------------------------------------------- */
+
     if (
-      !window.gptEngine ||
-      typeof window.gptEngine.generateResponse !== "function"
+      !window.gptEngine
     ) {
 
       throw new Error(
-        "GPT engine unavailable."
+        "window.gptEngine is not available."
       );
     }
+
+
+    if (
+      typeof window.gptEngine.generateResponse !==
+      "function"
+    ) {
+
+      throw new Error(
+        "gptEngine.generateResponse() is not available."
+      );
+    }
+
+
+    if (
+      !appState.weatherData
+    ) {
+
+      throw new Error(
+        "Weather data is not available for the AI request."
+      );
+    }
+
+
+    /* -------------------------------------------------------
+       GENERATE RESPONSE
+       ------------------------------------------------------- */
 
     const response =
       await window.gptEngine.generateResponse(
@@ -2070,30 +3151,52 @@ async function handleUserChatMessage(
         appState.currentLang
       );
 
+
     removeTypingIndicator(
       typingId
     );
+
+
+    if (
+      !response
+    ) {
+
+      throw new Error(
+        "GPT engine returned an empty response."
+      );
+    }
+
 
     appendMessage(
       "ai",
       response
     );
 
-  } catch (error) {
+  }
+
+  catch (error) {
 
     console.error(
       "AI response failed:",
       error
     );
 
+
     removeTypingIndicator(
       typingId
     );
+
+
+    /*
+     * Keep the user-facing message clean,
+     * but expose the real error in console.
+     */
 
     appendMessage(
       "ai",
       "⚠️ Advisory desk is momentarily updating records. Please try again."
     );
+
   }
 }
 
@@ -2119,14 +3222,13 @@ function triggerPersonaContextUpdate(
 
     commute:
       "Provide a practical commute advisory based on rainfall, wind and possible waterlogging."
+
   };
 
-  const prompt =
-    promptMap[persona] ||
-    promptMap.kisan;
 
   handleUserChatMessage(
-    prompt
+    promptMap[persona] ||
+    promptMap.kisan
   );
 }
 
@@ -2138,42 +3240,29 @@ function triggerPersonaContextUpdate(
 function renderInitialCopilotMessage() {
 
   const chatMessages =
-    getChatMessagesContainer();
+    document.getElementById(
+      "chat-messages"
+    );
+
 
   if (!chatMessages) {
 
-    console.warn(
-      "Cannot render initial Copilot message: chat container missing."
-    );
-
     return;
   }
 
-  /*
-   * Do not initialize twice.
-   */
+
   if (
-    appState.chatInitialized ||
-    chatMessages.dataset.initialized === "true"
+    chatMessages.dataset.initialized ===
+    "true"
   ) {
+
     return;
   }
 
-  appState.chatInitialized =
-    true;
 
   chatMessages.dataset.initialized =
     "true";
 
-  /*
-   * Explicitly remove hidden state.
-   */
-  chatMessages.classList.remove(
-    "hidden"
-  );
-
-  chatMessages.style.display =
-    "";
 
   appendMessage(
     "ai",
@@ -2200,21 +3289,22 @@ function appendMessage(
 ) {
 
   const chatMessages =
-    getChatMessagesContainer();
+    document.getElementById(
+      "chat-messages"
+    );
+
 
   if (!chatMessages) {
 
-    console.error(
-      "Unable to append message: chat container missing."
-    );
-
-    return null;
+    return;
   }
+
 
   const div =
     document.createElement(
       "div"
     );
+
 
   div.className =
     sender === "user"
@@ -2222,73 +3312,102 @@ function appendMessage(
       : "chat-bubble-ai";
 
 
-  if (sender === "user") {
+  if (
+    sender === "user"
+  ) {
 
     div.textContent =
-      String(text || "");
+      text;
 
-  } else {
+  }
+
+  else {
 
     let formatted =
-      escapeHtml(
-        String(text || "")
+      String(
+        text || ""
       );
 
-    /*
-     * Markdown-style formatting.
-     *
-     * Escape HTML FIRST so AI responses cannot inject
-     * arbitrary markup.
-     */
-    formatted =
-      formatted
-        .replace(
-          /^#### (.*$)/gim,
-          "<h4>$1</h4>"
-        )
-
-        .replace(
-          /^### (.*$)/gim,
-          '<h3><i data-lucide="zap" class="w-4 h-4 text-sky-400"></i> $1</h3>'
-        )
-
-        .replace(
-          /\*\*(.*?)\*\*/g,
-          "<strong>$1</strong>"
-        )
-
-        .replace(
-          /^\- (.*$)/gim,
-          "<li>$1</li>"
-        )
-
-        .replace(
-          /\n\n/g,
-          "<p></p>"
-        )
-
-        .replace(
-          /\n/g,
-          "<br/>"
-        );
 
     /*
-     * Group list items.
+     * Headers
      */
+
     formatted =
       formatted.replace(
-        /((?:<li>.*?<\/li><br\/>?)*)/gis,
-        match => {
-
-          if (
-            match.includes("<li>")
-          ) {
-            return `<ul>${match}</ul>`;
-          }
-
-          return match;
-        }
+        /^### (.*$)/gim,
+        '<h3><i data-lucide="zap" class="w-4 h-4 text-sky-400"></i> $1</h3>'
       );
+
+
+    formatted =
+      formatted.replace(
+        /^#### (.*$)/gim,
+        "<h4>$1</h4>"
+      );
+
+
+    /*
+     * Bold
+     */
+
+    formatted =
+      formatted.replace(
+        /\*\*(.*?)\*\*/g,
+        "<strong>$1</strong>"
+      );
+
+
+    /*
+     * List items
+     */
+
+    formatted =
+      formatted.replace(
+        /^\- (.*$)/gim,
+        "<li>$1</li>"
+      );
+
+
+    /*
+     * Paragraph spacing
+     */
+
+    formatted =
+      formatted.replace(
+        /\n\n/g,
+        "<p></p>"
+      );
+
+
+    /*
+     * Line breaks
+     */
+
+    formatted =
+      formatted.replace(
+        /\n/g,
+        "<br/>"
+      );
+
+
+    /*
+     * Wrap list items.
+     */
+
+    formatted =
+      formatted.replace(
+        /((?:<li>.*?<\/li><br\/>?)+)/gis,
+        "<ul>$1</ul>"
+      );
+
+
+    formatted =
+      formatted.replace(
+        /(<li>.*?<\/li>)/gis,
+        "<ul>$1</ul>"
+      );
+
 
     div.innerHTML =
       formatted;
@@ -2303,22 +3422,24 @@ function appendMessage(
         "div"
       );
 
+
     actionsDiv.className =
       "flex items-center gap-3 mt-3 pt-2 border-t border-slate-700/40 text-[11px] font-semibold text-slate-400";
 
 
-    /* AUDIO */
+    /* -------------------------------------------------------
+       AUDIO
+       ------------------------------------------------------- */
 
     const speakBtn =
       document.createElement(
         "button"
       );
 
-    speakBtn.type =
-      "button";
 
     speakBtn.className =
       "hover:text-sky-300 flex items-center gap-1 transition-colors";
+
 
     speakBtn.innerHTML =
       `
@@ -2326,44 +3447,53 @@ function appendMessage(
           data-lucide="volume-2"
           class="w-3.5 h-3.5 text-sky-400"
         ></i>
-        <span>Audio</span>
+
+        <span>
+          Audio
+        </span>
       `;
+
 
     speakBtn.onclick =
       () => {
 
         if (
           window.voiceManager &&
-          typeof window.voiceManager.speakText === "function"
+          typeof window.voiceManager.speakText ===
+          "function"
         ) {
 
           window.voiceManager.speakText(
-            String(text || ""),
+            text,
             appState.currentLang
           );
 
-        } else {
+        }
+
+        else {
 
           showNotification(
             "Voice manager unavailable.",
             "error"
           );
         }
+
       };
 
 
-    /* COPY */
+    /* -------------------------------------------------------
+       COPY
+       ------------------------------------------------------- */
 
     const copyBtn =
       document.createElement(
         "button"
       );
 
-    copyBtn.type =
-      "button";
 
     copyBtn.className =
       "hover:text-sky-300 flex items-center gap-1 transition-colors";
+
 
     copyBtn.innerHTML =
       `
@@ -2371,8 +3501,12 @@ function appendMessage(
           data-lucide="copy"
           class="w-3.5 h-3.5 text-slate-400"
         ></i>
-        <span>Copy</span>
+
+        <span>
+          Copy
+        </span>
       `;
+
 
     copyBtn.onclick =
       async () => {
@@ -2380,40 +3514,46 @@ function appendMessage(
         try {
 
           await navigator.clipboard.writeText(
-            String(text || "")
+            text
           );
+
 
           showNotification(
             "Advisory copied to clipboard!"
           );
 
-        } catch (error) {
+        }
 
-          console.warn(
-            "Clipboard copy failed:",
+        catch (error) {
+
+          console.error(
+            "Clipboard error:",
             error
           );
+
 
           showNotification(
             "Could not copy advisory.",
             "error"
           );
         }
+
       };
 
 
-    /* WHATSAPP */
+    /* -------------------------------------------------------
+       WHATSAPP
+       ------------------------------------------------------- */
 
     const waBtn =
       document.createElement(
         "button"
       );
 
-    waBtn.type =
-      "button";
 
     waBtn.className =
       "hover:text-emerald-300 flex items-center gap-1 transition-colors text-emerald-400";
+
 
     waBtn.innerHTML =
       `
@@ -2421,19 +3561,25 @@ function appendMessage(
           data-lucide="share-2"
           class="w-3.5 h-3.5"
         ></i>
-        <span>WhatsApp</span>
+
+        <span>
+          WhatsApp
+        </span>
       `;
+
 
     waBtn.onclick =
       () => {
 
         const message =
-          `🌾 WeatherGPT Advisory for ${appState.currentLocation.name}:\n\n${String(text || "")}`;
+          `🌾 WeatherGPT Advisory for ${appState.currentLocation.name}:\n\n${text}`;
+
 
         const waUrl =
           `https://api.whatsapp.com/send?text=${encodeURIComponent(
             message
           )}`;
+
 
         window.open(
           waUrl,
@@ -2447,17 +3593,21 @@ function appendMessage(
       speakBtn
     );
 
+
     actionsDiv.appendChild(
       copyBtn
     );
+
 
     actionsDiv.appendChild(
       waBtn
     );
 
+
     div.appendChild(
       actionsDiv
     );
+
   }
 
 
@@ -2465,15 +3615,9 @@ function appendMessage(
     div
   );
 
-  /*
-   * Always scroll to newest message.
-   */
-  requestAnimationFrame(() => {
 
-    chatMessages.scrollTop =
-      chatMessages.scrollHeight;
-
-  });
+  chatMessages.scrollTop =
+    chatMessages.scrollHeight;
 
 
   if (
@@ -2482,8 +3626,6 @@ function appendMessage(
 
     lucide.createIcons();
   }
-
-  return div;
 }
 
 
@@ -2494,27 +3636,34 @@ function appendMessage(
 function appendTypingIndicator() {
 
   const chatMessages =
-    getChatMessagesContainer();
+    document.getElementById(
+      "chat-messages"
+    );
+
 
   if (!chatMessages) {
+
     return null;
   }
 
+
   const id =
-    `typing-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    `typing-${Date.now()}`;
+
 
   const div =
     document.createElement(
       "div"
     );
 
+
   div.id =
     id;
 
+
   div.className =
     "chat-bubble-ai flex items-center gap-2 text-slate-400 text-xs italic";
+
 
   div.innerHTML =
     `
@@ -2527,16 +3676,15 @@ function appendTypingIndicator() {
       </span>
     `;
 
+
   chatMessages.appendChild(
     div
   );
 
-  requestAnimationFrame(() => {
 
-    chatMessages.scrollTop =
-      chatMessages.scrollHeight;
+  chatMessages.scrollTop =
+    chatMessages.scrollHeight;
 
-  });
 
   return id;
 }
@@ -2547,8 +3695,10 @@ function removeTypingIndicator(
 ) {
 
   if (!id) {
+
     return;
   }
+
 
   document
     .getElementById(id)
@@ -2569,13 +3719,16 @@ function toggleVoiceInput(
       "voice-indicator"
     );
 
+
   const btnText =
     document.getElementById(
       "voice-btn-text"
     );
 
 
-  if (!window.voiceManager) {
+  if (
+    !window.voiceManager
+  ) {
 
     showNotification(
       "Voice manager unavailable.",
@@ -2592,16 +3745,19 @@ function toggleVoiceInput(
 
     window.voiceManager.stopListening();
 
+
     waveIndicator
       ?.classList.add(
         "hidden"
       );
+
 
     if (btnText) {
 
       btnText.textContent =
         "Voice Query";
     }
+
 
     return;
   }
@@ -2611,6 +3767,7 @@ function toggleVoiceInput(
     ?.classList.remove(
       "hidden"
     );
+
 
   if (btnText) {
 
@@ -2623,24 +3780,33 @@ function toggleVoiceInput(
 
     appState.currentLang,
 
+
     transcript => {
 
-      if (targetInput) {
+      if (
+        targetInput
+      ) {
 
         targetInput.value =
           transcript;
       }
 
+
       handleUserChatMessage(
         transcript
       );
 
-      if (targetInput) {
+
+      if (
+        targetInput
+      ) {
 
         targetInput.value =
           "";
       }
+
     },
+
 
     () => {
 
@@ -2649,12 +3815,15 @@ function toggleVoiceInput(
           "hidden"
         );
 
+
       if (btnText) {
 
         btnText.textContent =
           "Voice Query";
       }
+
     },
+
 
     error => {
 
@@ -2663,17 +3832,22 @@ function toggleVoiceInput(
           "hidden"
         );
 
+
       if (btnText) {
 
         btnText.textContent =
           "Voice Query";
       }
 
+
       showNotification(
-        error || "Voice input failed.",
+        error ||
+        "Voice input failed.",
         "error"
       );
+
     }
+
   );
 }
 
@@ -2689,15 +3863,19 @@ function renderDossierContent() {
       "dossier-content"
     );
 
+
   if (
     !content ||
     !appState.weatherData
   ) {
+
     return;
   }
 
+
   const d =
     appState.weatherData;
+
 
   content.innerHTML =
     `
@@ -2714,25 +3892,37 @@ function renderDossierContent() {
             <span
               class="text-sm font-bold text-white"
             >
-              ${escapeHtml(d.location?.name)},
-              ${escapeHtml(d.location?.state)}
+              ${escapeHtml(
+                d.location?.name || "--"
+              )},
+              ${escapeHtml(
+                d.location?.state || "--"
+              )}
             </span>
+
 
             <span
               class="text-slate-400 block text-[11px]"
             >
               Coordinates:
-              ${Number(d.location?.lat || 0).toFixed(4)}°N,
-              ${Number(d.location?.lon || 0).toFixed(4)}°E
+              ${Number(
+                d.location?.lat || 0
+              ).toFixed(4)}°,
+              ${Number(
+                d.location?.lon || 0
+              ).toFixed(4)}°
             </span>
 
           </div>
 
+
           <span
             class="px-2.5 py-1 rounded bg-sky-950 text-sky-300 font-mono text-xs font-bold"
           >
-            ${escapeHtml(d.current?.temp)}°C
-            (${escapeHtml(d.current?.condition)})
+            ${d.current?.temp ?? "--"}°C
+            (${escapeHtml(
+              d.current?.condition || "--"
+            )})
           </span>
 
         </div>
@@ -2752,10 +3942,11 @@ function renderDossierContent() {
               Humidity
             </span>
 
+
             <span
               class="font-bold text-white"
             >
-              ${escapeHtml(d.current?.humidity)}%
+              ${d.current?.humidity ?? "--"}%
             </span>
 
           </div>
@@ -2771,12 +3962,15 @@ function renderDossierContent() {
               Wind Velocity
             </span>
 
+
             <span
               class="font-bold text-white"
             >
-              ${escapeHtml(d.current?.windSpeed)}
+              ${d.current?.windSpeed ?? "--"}
               km/h
-              (${escapeHtml(d.current?.windCardinal)})
+              (${escapeHtml(
+                d.current?.windCardinal || "--"
+              )})
             </span>
 
           </div>
@@ -2792,11 +3986,14 @@ function renderDossierContent() {
               Air Quality
             </span>
 
+
             <span
               class="font-bold text-amber-400"
             >
-              ${escapeHtml(d.aqi?.value)}
-              (${escapeHtml(d.aqi?.category)})
+              ${d.aqi?.value ?? "--"}
+              (${escapeHtml(
+                d.aqi?.category || "--"
+              )})
             </span>
 
           </div>
@@ -2813,6 +4010,7 @@ function renderDossierContent() {
           >
             🌾 Agricultural Advisory
           </span>
+
 
           <p>
             ${
@@ -2835,10 +4033,15 @@ function renderDossierContent() {
             ⚠️ Weather Hazard Assessment
           </span>
 
+
           <p>
-            ${escapeHtml(d.imdAlert?.title)}
+            ${escapeHtml(
+              d.imdAlert?.title || "No alert"
+            )}
             -
-            ${escapeHtml(d.imdAlert?.desc)}
+            ${escapeHtml(
+              d.imdAlert?.desc || ""
+            )}
           </p>
 
         </div>
@@ -2860,6 +4063,7 @@ function showLoader(
     document.getElementById(
       "loading-spinner"
     );
+
 
   if (element) {
 
@@ -2885,6 +4089,7 @@ function showNotification(
       "div"
     );
 
+
   toast.className =
     `fixed bottom-5 right-5 z-50 ` +
     `px-4 py-2.5 rounded-xl text-xs ` +
@@ -2895,12 +4100,15 @@ function showNotification(
         : "bg-sky-950 border-sky-500 text-sky-200"
     );
 
+
   toast.textContent =
     message;
+
 
   document.body.appendChild(
     toast
   );
+
 
   setTimeout(
     () => {
@@ -2908,9 +4116,12 @@ function showNotification(
       toast.style.opacity =
         "0";
 
+
       setTimeout(
         () => {
+
           toast.remove();
+
         },
         300
       );
@@ -2932,22 +4143,27 @@ function escapeHtml(
   return String(
     value ?? ""
   )
+
     .replace(
       /&/g,
       "&amp;"
     )
+
     .replace(
       /</g,
       "&lt;"
     )
+
     .replace(
       />/g,
       "&gt;"
     )
+
     .replace(
       /"/g,
       "&quot;"
     )
+
     .replace(
       /'/g,
       "&#039;"
@@ -2962,14 +4178,18 @@ function escapeHtml(
 window.appState =
   appState;
 
+
 window.updateWeatherUI =
   updateWeatherUI;
+
 
 window.loadWeather =
   loadWeather;
 
-window.handleUserChatMessage =
-  handleUserChatMessage;
 
-window.appendMessage =
-  appendMessage;
+window.syncMapToCurrentLocation =
+  syncMapToCurrentLocation;
+
+
+window.updateMapsForLocation =
+  updateMapsForLocation;
