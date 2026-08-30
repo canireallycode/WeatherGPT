@@ -9,8 +9,6 @@
  *   - POPULAR_INDIAN_LOCATIONS
  *   - WMO_CODE_MAP
  *   - WeatherService
- *
- * Those already exist in weatherService.js.
  */
 
 const appState = {
@@ -25,7 +23,8 @@ const appState = {
   activePersona: "kisan",
   currentLang: "en",
   activeTab: "overview",
-  chartInstance: null
+  chartInstance: null,
+  chatInitialized: false
 };
 
 
@@ -40,6 +39,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function initApp() {
   try {
+
+    /*
+     * IMPORTANT:
+     * Initialize the chat immediately.
+     * It must NOT depend on weather API loading.
+     */
+    setupChat();
+
     setupEventListeners();
 
     if (typeof lucide !== "undefined") {
@@ -47,14 +54,21 @@ async function initApp() {
     }
 
     /*
+     * Render the initial Copilot message immediately.
+     */
+    renderInitialCopilotMessage();
+
+    /*
      * weatherService.js must already be loaded.
      */
     if (!window.weatherService) {
       console.error("WeatherService is not available.");
+
       showNotification(
         "Weather service failed to load.",
         "error"
       );
+
       return;
     }
 
@@ -72,27 +86,105 @@ async function initApp() {
      * Initialize map after weather data is available.
      */
     if (window.mapService) {
-      window.mapService.initMap(
-        "weather-map",
-        appState.currentLocation.lat,
-        appState.currentLocation.lon,
-        appState.currentLocation.name,
-        appState.weatherData
-      );
+      try {
+        window.mapService.initMap(
+          "weather-map",
+          appState.currentLocation.lat,
+          appState.currentLocation.lon,
+          appState.currentLocation.name,
+          appState.weatherData
+        );
+      } catch (error) {
+        console.warn(
+          "Initial map initialization failed:",
+          error
+        );
+      }
     }
 
-    /*
-     * Initial Copilot message.
-     */
-    renderInitialCopilotMessage();
-
   } catch (error) {
-    console.error("WeatherGPT initialization failed:", error);
+
+    console.error(
+      "WeatherGPT initialization failed:",
+      error
+    );
 
     showNotification(
       "Application initialization failed.",
       "error"
     );
+  }
+}
+
+
+/* =========================================================
+   CHAT INITIALIZATION
+   ========================================================= */
+
+function getChatMessagesContainer() {
+
+  /*
+   * Primary ID used by the application.
+   */
+  let container =
+    document.getElementById("chat-messages");
+
+  if (container) {
+    return container;
+  }
+
+  /*
+   * Fallbacks make the app more tolerant of small
+   * HTML naming differences.
+   */
+  const fallbackSelectors = [
+    "#copilot-messages",
+    "#messages-container",
+    ".chat-messages",
+    ".copilot-messages"
+  ];
+
+  for (const selector of fallbackSelectors) {
+
+    container =
+      document.querySelector(selector);
+
+    if (container) {
+      return container;
+    }
+  }
+
+  return null;
+}
+
+
+function setupChat() {
+
+  const chatMessages =
+    getChatMessagesContainer();
+
+  if (!chatMessages) {
+
+    console.warn(
+      "Chat message container not found."
+    );
+
+    return;
+  }
+
+  /*
+   * Make sure the message area is actually visible.
+   */
+  chatMessages.classList.remove("hidden");
+
+  chatMessages.style.display = "";
+
+  /*
+   * Give the chat area a predictable scrolling behavior.
+   * Existing CSS still controls the actual dimensions.
+   */
+  if (!chatMessages.style.overflowY) {
+    chatMessages.style.overflowY = "auto";
   }
 }
 
@@ -107,7 +199,8 @@ function setupEventListeners() {
      TAB SWITCHING
      ------------------------------------------------------- */
 
-  const tabs = document.querySelectorAll(".tab-pill");
+  const tabs =
+    document.querySelectorAll(".tab-pill");
 
   tabs.forEach(tab => {
 
@@ -122,7 +215,8 @@ function setupEventListeners() {
       const tabId =
         tab.getAttribute("data-tab");
 
-      appState.activeTab = tabId;
+      appState.activeTab =
+        tabId;
 
       document
         .querySelectorAll(".tab-panel")
@@ -131,7 +225,9 @@ function setupEventListeners() {
         });
 
       const targetPanel =
-        document.getElementById(`tab-${tabId}`);
+        document.getElementById(
+          `tab-${tabId}`
+        );
 
       if (targetPanel) {
         targetPanel.classList.remove("hidden");
@@ -142,36 +238,58 @@ function setupEventListeners() {
        */
       if (
         tabId === "radar" &&
-        window.mapService
+        window.mapService &&
+        appState.weatherData
       ) {
 
         setTimeout(() => {
 
-          window.mapService.initMap(
-            "weather-map-full",
-            appState.currentLocation.lat,
-            appState.currentLocation.lon,
-            appState.currentLocation.name,
-            appState.weatherData
-          );
+          try {
+
+            window.mapService.initMap(
+              "weather-map-full",
+              appState.currentLocation.lat,
+              appState.currentLocation.lon,
+              appState.currentLocation.name,
+              appState.weatherData
+            );
+
+          } catch (error) {
+
+            console.warn(
+              "Radar map initialization failed:",
+              error
+            );
+          }
 
         }, 150);
       }
 
       else if (
         tabId === "overview" &&
-        window.mapService
+        window.mapService &&
+        appState.weatherData
       ) {
 
         setTimeout(() => {
 
-          window.mapService.initMap(
-            "weather-map",
-            appState.currentLocation.lat,
-            appState.currentLocation.lon,
-            appState.currentLocation.name,
-            appState.weatherData
-          );
+          try {
+
+            window.mapService.initMap(
+              "weather-map",
+              appState.currentLocation.lat,
+              appState.currentLocation.lon,
+              appState.currentLocation.name,
+              appState.weatherData
+            );
+
+          } catch (error) {
+
+            console.warn(
+              "Overview map initialization failed:",
+              error
+            );
+          }
 
         }, 150);
       }
@@ -202,15 +320,14 @@ function setupEventListeners() {
         if (
           typeof setLanguage === "function"
         ) {
+
           setLanguage(
             appState.currentLang
           );
         }
 
-        /*
-         * Re-render UI text/data if necessary.
-         */
         if (appState.weatherData) {
+
           updateWeatherUI(
             appState.weatherData
           );
@@ -247,6 +364,7 @@ function setupEventListeners() {
         window.gptEngine &&
         typeof window.gptEngine.setPersona === "function"
       ) {
+
         window.gptEngine.setPersona(
           persona
         );
@@ -289,9 +407,7 @@ function setupEventListeners() {
         if (value.length < 2) {
 
           if (dropdown) {
-            dropdown.classList.add(
-              "hidden"
-            );
+            dropdown.classList.add("hidden");
           }
 
           return;
@@ -303,9 +419,7 @@ function setupEventListeners() {
 
               try {
 
-                if (
-                  !window.weatherService
-                ) {
+                if (!window.weatherService) {
                   return;
                 }
 
@@ -388,6 +502,25 @@ function setupEventListeners() {
         chatInput.value = "";
       }
     );
+
+    /*
+     * Also support Enter key naturally.
+     */
+    chatInput.addEventListener(
+      "keydown",
+      event => {
+
+        if (
+          event.key === "Enter" &&
+          !event.shiftKey
+        ) {
+
+          event.preventDefault();
+
+          chatForm.requestSubmit();
+        }
+      }
+    );
   }
 
 
@@ -405,6 +538,7 @@ function setupEventListeners() {
     voiceBtn.addEventListener(
       "click",
       () => {
+
         toggleVoiceInput(
           chatInput
         );
@@ -426,9 +560,11 @@ function setupEventListeners() {
         () => {
 
           const question =
+            chip.getAttribute("data-question") ||
             chip.textContent.trim();
 
           if (question) {
+
             handleUserChatMessage(
               question
             );
@@ -557,10 +693,12 @@ function setupEventListeners() {
           !window.gptEngine ||
           typeof window.gptEngine.setApiConfig !== "function"
         ) {
+
           showNotification(
             "AI engine is unavailable.",
             "error"
           );
+
           return;
         }
 
@@ -607,6 +745,7 @@ window.loadCity = async function (
     );
 
   if (searchInput) {
+
     searchInput.value =
       `${name}, ${state}`;
   }
@@ -636,9 +775,6 @@ window.loadWeatherByCoords =
     let state =
       "India";
 
-    /*
-     * Reverse-ish lookup using Open-Meteo.
-     */
     try {
 
       const url =
@@ -724,9 +860,11 @@ function handleGeolocation() {
     );
 
   if (geoBtn) {
+
     geoBtn.classList.add(
       "opacity-50"
     );
+
     geoBtn.disabled = true;
   }
 
@@ -736,9 +874,11 @@ function handleGeolocation() {
     async position => {
 
       if (geoBtn) {
+
         geoBtn.classList.remove(
           "opacity-50"
         );
+
         geoBtn.disabled = false;
       }
 
@@ -753,9 +893,11 @@ function handleGeolocation() {
     error => {
 
       if (geoBtn) {
+
         geoBtn.classList.remove(
           "opacity-50"
         );
+
         geoBtn.disabled = false;
       }
 
@@ -795,6 +937,7 @@ async function loadWeather(
   try {
 
     if (!window.weatherService) {
+
       throw new Error(
         "WeatherService is unavailable."
       );
@@ -809,6 +952,7 @@ async function loadWeather(
       );
 
     if (!data) {
+
       throw new Error(
         "No weather data returned."
       );
@@ -827,7 +971,6 @@ async function loadWeather(
     updateWeatherUI(
       data
     );
-
 
     /*
      * Update map.
@@ -900,7 +1043,6 @@ function renderAutocomplete(
     return;
   }
 
-
   dropdown.innerHTML =
     results
       .map(location => {
@@ -912,7 +1054,7 @@ function renderAutocomplete(
 
         const state =
           escapeHtml(
-            location.state
+            location.state || ""
           );
 
         return `
@@ -923,7 +1065,6 @@ function renderAutocomplete(
             data-name="${name}"
             data-state="${state}"
           >
-
             <div>
               <span
                 class="font-bold text-white text-xs sm:text-sm"
@@ -943,12 +1084,10 @@ function renderAutocomplete(
             >
               Select →
             </span>
-
           </div>
         `;
       })
       .join("");
-
 
   dropdown
     .querySelectorAll(
@@ -976,7 +1115,6 @@ function renderAutocomplete(
           const state =
             item.dataset.state;
 
-
           const searchInput =
             document.getElementById(
               "search-input"
@@ -1002,7 +1140,6 @@ function renderAutocomplete(
       );
     });
 
-
   dropdown.classList.remove(
     "hidden"
   );
@@ -1010,7 +1147,7 @@ function renderAutocomplete(
 
 
 /* =========================================================
-   CLOSE AUTOCOMPLETE WHEN CLICKING OUTSIDE
+   CLOSE AUTOCOMPLETE
    ========================================================= */
 
 document.addEventListener(
@@ -1053,10 +1190,6 @@ function updateWeatherUI(
     return;
   }
 
-
-  /*
-   * Helper for safe DOM updates.
-   */
   const setText = (
     id,
     value
@@ -1067,73 +1200,69 @@ function updateWeatherUI(
 
     if (element) {
       element.textContent =
-        value;
+        value ?? "--";
     }
   };
 
 
-  /* -------------------------------------------------------
-     HERO
-     ------------------------------------------------------- */
+  /* HERO */
 
   setText(
     "loc-name",
-    data.location.name
+    data.location?.name
   );
 
   setText(
     "loc-state",
-    data.location.state
+    data.location?.state
   );
 
   setText(
     "current-temp",
-    `${data.current.temp}°C`
+    `${data.current?.temp ?? "--"}°C`
   );
 
   setText(
     "val-feels-like",
-    `${data.current.feelsLike}°C`
+    `${data.current?.feelsLike ?? "--"}°C`
   );
 
   setText(
     "val-today-max",
-    `${data.current.todayMax}°`
+    `${data.current?.todayMax ?? "--"}°`
   );
 
   setText(
     "val-today-min",
-    `${data.current.todayMin}°`
+    `${data.current?.todayMin ?? "--"}°`
   );
 
   setText(
     "current-condition",
-    data.current.condition
+    data.current?.condition
   );
 
   setText(
     "current-icon",
-    data.current.icon
+    data.current?.icon
   );
 
 
-  /* -------------------------------------------------------
-     MAIN METRICS
-     ------------------------------------------------------- */
+  /* MAIN METRICS */
 
   setText(
     "val-humidity",
-    `${data.current.humidity}%`
+    `${data.current?.humidity ?? "--"}%`
   );
 
   setText(
     "val-wind",
-    `${data.current.windSpeed}`
+    `${data.current?.windSpeed ?? "--"}`
   );
 
   setText(
     "val-uv",
-    `${data.current.uvIndex}`
+    `${data.current?.uvIndex ?? "--"}`
   );
 
   setText(
@@ -1142,55 +1271,58 @@ function updateWeatherUI(
   );
 
 
-  /* -------------------------------------------------------
-     WIND ROSE
-     ------------------------------------------------------- */
+  /* WIND ROSE */
 
   const needle =
     document.getElementById(
       "compass-needle"
     );
 
-  if (needle) {
+  if (
+    needle &&
+    data.current
+  ) {
 
     needle.style.transform =
-      `rotate(${data.current.windDirection}deg)`;
+      `rotate(${Number(
+        data.current.windDirection || 0
+      )}deg)`;
   }
 
   setText(
     "val-wind-cardinal",
-    data.current.windCardinal
+    data.current?.windCardinal
   );
 
   setText(
     "val-wind-speed-main",
-    data.current.windSpeed
+    data.current?.windSpeed
   );
 
   setText(
     "val-wind-gusts",
-    `${data.current.windGusts} km/h`
+    `${data.current?.windGusts ?? "--"} km/h`
   );
 
   setText(
     "val-wind-deg",
-    `${data.current.windDirection}°`
+    `${data.current?.windDirection ?? "--"}°`
   );
 
   setText(
     "val-pressure-num",
-    `${data.current.pressure} hPa`
+    `${data.current?.pressure ?? "--"} hPa`
   );
 
   setText(
     "val-barometer-trend",
-    `${data.current.pressure} hPa Steady`
+    data.current?.pressure != null
+      ? `${data.current.pressure} hPa Steady`
+      : "--"
   );
 
 
-  /* -------------------------------------------------------
-     RAIN
-     ------------------------------------------------------- */
+  /* RAIN */
 
   const rainProbability =
     data.hourly?.[0]?.rainProb ?? 0;
@@ -1201,9 +1333,7 @@ function updateWeatherUI(
   );
 
 
-  /* -------------------------------------------------------
-     SUN
-     ------------------------------------------------------- */
+  /* SUN */
 
   setText(
     "val-sunrise-time",
@@ -1217,7 +1347,9 @@ function updateWeatherUI(
 
   setText(
     "val-daylight-dur",
-    `${data.sun?.daylightHours || "--"} Sun`
+    data.sun?.daylightHours
+      ? `${data.sun.daylightHours} Sun`
+      : "--"
   );
 
 
@@ -1237,15 +1369,14 @@ function updateWeatherUI(
         Math.min(
           1,
           Number(
-            data.sun.positionPercent
+            data.sun.positionPercent || 0
           ) / 100
         )
       );
 
     const cx =
       15 +
-      p *
-      (185 - 15);
+      p * 170;
 
     const cy =
       70 -
@@ -1266,9 +1397,7 @@ function updateWeatherUI(
   }
 
 
-  /* -------------------------------------------------------
-     MAP COORDINATES
-     ------------------------------------------------------- */
+  /* MAP COORDINATES */
 
   const coordBadge =
     document.getElementById(
@@ -1281,24 +1410,26 @@ function updateWeatherUI(
   ) {
 
     const latDir =
-      data.location.lat >= 0
+      Number(data.location.lat) >= 0
         ? "N"
         : "S";
 
     const lonDir =
-      data.location.lon >= 0
+      Number(data.location.lon) >= 0
         ? "E"
         : "W";
 
     coordBadge.textContent =
-      `${Math.abs(data.location.lat).toFixed(2)}° ${latDir}, ` +
-      `${Math.abs(data.location.lon).toFixed(2)}° ${lonDir}`;
+      `${Math.abs(
+        Number(data.location.lat)
+      ).toFixed(2)}° ${latDir}, ` +
+      `${Math.abs(
+        Number(data.location.lon)
+      ).toFixed(2)}° ${lonDir}`;
   }
 
 
-  /* -------------------------------------------------------
-     IMD ALERT
-     ------------------------------------------------------- */
+  /* IMD ALERT */
 
   const ribbon =
     document.getElementById(
@@ -1323,21 +1454,19 @@ function updateWeatherUI(
   ) {
 
     alertTitle.textContent =
-      `IMD Status: ${data.imdAlert.title}`;
+      `IMD Status: ${data.imdAlert.title || ""}`;
 
     alertDesc.textContent =
-      data.imdAlert.desc;
+      data.imdAlert.desc || "";
 
     ribbon.className =
       `mb-5 p-4 rounded-2xl border ` +
       `flex items-center justify-between gap-3 ` +
-      `${data.imdAlert.badgeColor}`;
+      `${data.imdAlert.badgeColor || ""}`;
   }
 
 
-  /* -------------------------------------------------------
-     SPRAY BADGE
-     ------------------------------------------------------- */
+  /* SPRAY BADGE */
 
   const badgeSpray =
     document.getElementById(
@@ -1354,8 +1483,13 @@ function updateWeatherUI(
     ) {
 
       badgeSpray.innerHTML =
-        `<i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
-         <span>Spraying Safe</span>`;
+        `
+          <i
+            data-lucide="check-circle-2"
+            class="w-3.5 h-3.5"
+          ></i>
+          <span>Spraying Safe</span>
+        `;
 
       badgeSpray.className =
         "text-xs font-semibold px-3 py-1.5 rounded-full " +
@@ -1366,8 +1500,13 @@ function updateWeatherUI(
     } else {
 
       badgeSpray.innerHTML =
-        `<i data-lucide="alert-circle" class="w-3.5 h-3.5"></i>
-         <span>Avoid Spraying</span>`;
+        `
+          <i
+            data-lucide="alert-circle"
+            class="w-3.5 h-3.5"
+          ></i>
+          <span>Avoid Spraying</span>
+        `;
 
       badgeSpray.className =
         "text-xs font-semibold px-3 py-1.5 rounded-full " +
@@ -1378,9 +1517,7 @@ function updateWeatherUI(
   }
 
 
-  /* -------------------------------------------------------
-     IRRIGATION
-     ------------------------------------------------------- */
+  /* IRRIGATION */
 
   setText(
     "val-irrigation",
@@ -1390,9 +1527,7 @@ function updateWeatherUI(
   );
 
 
-  /* -------------------------------------------------------
-     SPRAY MATRIX
-     ------------------------------------------------------- */
+  /* SPRAY MATRIX */
 
   const sprayGrid =
     document.getElementById(
@@ -1408,9 +1543,10 @@ function updateWeatherUI(
       data.sprayMatrix
         .map(slot => `
           <div
-            class="spray-slot ${slot.status}"
+            class="spray-slot ${escapeHtml(
+              slot.status || ""
+            )}"
           >
-
             <span
               class="font-bold text-[11px]"
             >
@@ -1420,21 +1556,19 @@ function updateWeatherUI(
             <span
               class="text-xs font-extrabold my-1 font-num"
             >
-              ${slot.temp}°C
+              ${escapeHtml(slot.temp)}°C
             </span>
 
             <div
               class="text-[10px] opacity-80 flex flex-col items-center"
             >
-
               <span>
-                💨 ${slot.wind}km/h
+                💨 ${escapeHtml(slot.wind)}km/h
               </span>
 
               <span>
-                💧 ${slot.rainProb}%
+                💧 ${escapeHtml(slot.rainProb)}%
               </span>
-
             </div>
 
             <span
@@ -1442,16 +1576,13 @@ function updateWeatherUI(
             >
               ${escapeHtml(slot.statusLabel)}
             </span>
-
           </div>
         `)
         .join("");
   }
 
 
-  /* -------------------------------------------------------
-     AGRICULTURE
-     ------------------------------------------------------- */
+  /* AGRICULTURE */
 
   setText(
     "val-evapo",
@@ -1464,9 +1595,7 @@ function updateWeatherUI(
   );
 
 
-  /* -------------------------------------------------------
-     AQI / POLLUTANTS
-     ------------------------------------------------------- */
+  /* AQI */
 
   if (data.aqi?.pollutants) {
 
@@ -1502,9 +1631,7 @@ function updateWeatherUI(
   );
 
 
-  /* -------------------------------------------------------
-     SOLAR
-     ------------------------------------------------------- */
+  /* SOLAR */
 
   setText(
     "val-solar-potential",
@@ -1517,18 +1644,11 @@ function updateWeatherUI(
   );
 
 
-  /* -------------------------------------------------------
-     7-DAY FORECAST
-     ------------------------------------------------------- */
+  /* FORECAST */
 
   render7DaySpectrum(
     data.daily
   );
-
-
-  /* -------------------------------------------------------
-     24-HOUR CHART
-     ------------------------------------------------------- */
 
   render24hChart(
     data.hourly
@@ -1561,14 +1681,12 @@ function render7DaySpectrum(
     return;
   }
 
-
   container.innerHTML =
     days
       .map(day => `
         <div
           class="flex items-center justify-between gap-3 text-xs py-1 border-b border-slate-800/40 last:border-0"
         >
-
           <span
             class="font-bold text-slate-300 w-16"
           >
@@ -1578,48 +1696,43 @@ function render7DaySpectrum(
           <span
             class="text-xl w-7 text-center"
           >
-            ${day.icon}
+            ${escapeHtml(day.icon)}
           </span>
 
           <div
             class="flex items-center gap-1 text-[11px] text-sky-400 w-12"
           >
             <span>💧</span>
-            <span>${day.rainProb}%</span>
+            <span>${escapeHtml(day.rainProb)}%</span>
           </div>
 
           <div
             class="temp-bar-container"
           >
-
             <span
               class="font-mono text-slate-400 text-[11px] w-6 text-right"
             >
-              ${day.minTemp}°
+              ${escapeHtml(day.minTemp)}°
             </span>
 
             <div
               class="temp-bar-bg"
             >
-
               <div
                 class="temp-bar-fill"
                 style="
-                  left: ${day.barLeft}%;
-                  width: ${day.barWidth}%;
+                  left: ${Number(day.barLeft) || 0}%;
+                  width: ${Number(day.barWidth) || 0}%;
                 "
               ></div>
-
             </div>
 
             <span
               class="font-mono text-white font-bold text-[11px] w-6 text-left"
             >
-              ${day.maxTemp}°
+              ${escapeHtml(day.maxTemp)}°
             </span>
-
           </div>
-
         </div>
       `)
       .join("");
@@ -1646,11 +1759,6 @@ function render24hChart(
     return;
   }
 
-
-  /*
-   * Chart.js is optional.
-   * If it isn't loaded, don't crash the entire application.
-   */
   if (
     typeof Chart === "undefined"
   ) {
@@ -1662,14 +1770,12 @@ function render24hChart(
     return;
   }
 
-
-  if (
-    appState.chartInstance
-  ) {
+  if (appState.chartInstance) {
 
     try {
       appState.chartInstance.destroy();
     } catch (error) {
+
       console.warn(
         "Previous chart could not be destroyed:",
         error
@@ -1680,14 +1786,12 @@ function render24hChart(
       null;
   }
 
-
   const ctx =
     canvas.getContext("2d");
 
   if (!ctx) {
     return;
   }
-
 
   const gradient =
     ctx.createLinearGradient(
@@ -1706,7 +1810,6 @@ function render24hChart(
     1,
     "rgba(56, 189, 248, 0.0)"
   );
-
 
   appState.chartInstance =
     new Chart(
@@ -1778,10 +1881,8 @@ function render24hChart(
               yAxisID:
                 "y1"
             }
-
           ]
         },
-
 
         options: {
 
@@ -1798,7 +1899,6 @@ function render24hChart(
             intersect:
               false
           },
-
 
           plugins: {
 
@@ -1819,7 +1919,6 @@ function render24hChart(
               }
             },
 
-
             tooltip: {
 
               backgroundColor:
@@ -1832,18 +1931,9 @@ function render24hChart(
                 1,
 
               padding:
-                10,
-
-              titleFont: {
-                size:
-                  12,
-
-                weight:
-                  "bold"
-              }
+                10
             }
           },
-
 
           scales: {
 
@@ -1869,7 +1959,6 @@ function render24hChart(
               }
             },
 
-
             y: {
 
               ticks: {
@@ -1888,7 +1977,6 @@ function render24hChart(
                   "rgba(255,255,255,0.04)"
               }
             },
-
 
             y1: {
 
@@ -1933,14 +2021,27 @@ async function handleUserChatMessage(
 ) {
 
   const chatMessages =
-    document.getElementById(
-      "chat-messages"
-    );
+    getChatMessagesContainer();
 
   if (!chatMessages) {
+
+    console.error(
+      "Chat container not found."
+    );
+
+    showNotification(
+      "Chat interface could not be initialized.",
+      "error"
+    );
+
     return;
   }
 
+  /*
+   * Make sure the chat area is visible.
+   */
+  chatMessages.classList.remove("hidden");
+  chatMessages.style.display = "";
 
   appendMessage(
     "user",
@@ -1949,7 +2050,6 @@ async function handleUserChatMessage(
 
   const typingId =
     appendTypingIndicator();
-
 
   try {
 
@@ -1963,14 +2063,12 @@ async function handleUserChatMessage(
       );
     }
 
-
     const response =
       await window.gptEngine.generateResponse(
         userText,
         appState.weatherData,
         appState.currentLang
       );
-
 
     removeTypingIndicator(
       typingId
@@ -2023,10 +2121,12 @@ function triggerPersonaContextUpdate(
       "Provide a practical commute advisory based on rainfall, wind and possible waterlogging."
   };
 
+  const prompt =
+    promptMap[persona] ||
+    promptMap.kisan;
 
   handleUserChatMessage(
-    promptMap[persona] ||
-    promptMap.kisan
+    prompt
   );
 }
 
@@ -2037,29 +2137,43 @@ function triggerPersonaContextUpdate(
 
 function renderInitialCopilotMessage() {
 
-  /*
-   * Prevent duplicate initial messages
-   * if initApp is somehow triggered twice.
-   */
-
   const chatMessages =
-    document.getElementById(
-      "chat-messages"
-    );
+    getChatMessagesContainer();
 
   if (!chatMessages) {
+
+    console.warn(
+      "Cannot render initial Copilot message: chat container missing."
+    );
+
     return;
   }
 
+  /*
+   * Do not initialize twice.
+   */
   if (
+    appState.chatInitialized ||
     chatMessages.dataset.initialized === "true"
   ) {
     return;
   }
 
+  appState.chatInitialized =
+    true;
+
   chatMessages.dataset.initialized =
     "true";
 
+  /*
+   * Explicitly remove hidden state.
+   */
+  chatMessages.classList.remove(
+    "hidden"
+  );
+
+  chatMessages.style.display =
+    "";
 
   appendMessage(
     "ai",
@@ -2086,14 +2200,16 @@ function appendMessage(
 ) {
 
   const chatMessages =
-    document.getElementById(
-      "chat-messages"
-    );
+    getChatMessagesContainer();
 
   if (!chatMessages) {
-    return;
-  }
 
+    console.error(
+      "Unable to append message: chat container missing."
+    );
+
+    return null;
+  }
 
   const div =
     document.createElement(
@@ -2106,26 +2222,34 @@ function appendMessage(
       : "chat-bubble-ai";
 
 
-  if (
-    sender === "user"
-  ) {
+  if (sender === "user") {
 
     div.textContent =
-      text;
+      String(text || "");
 
   } else {
 
     let formatted =
-      String(text || "")
+      escapeHtml(
+        String(text || "")
+      );
+
+    /*
+     * Markdown-style formatting.
+     *
+     * Escape HTML FIRST so AI responses cannot inject
+     * arbitrary markup.
+     */
+    formatted =
+      formatted
+        .replace(
+          /^#### (.*$)/gim,
+          "<h4>$1</h4>"
+        )
 
         .replace(
           /^### (.*$)/gim,
           '<h3><i data-lucide="zap" class="w-4 h-4 text-sky-400"></i> $1</h3>'
-        )
-
-        .replace(
-          /^#### (.*$)/gim,
-          "<h4>$1</h4>"
         )
 
         .replace(
@@ -2148,21 +2272,31 @@ function appendMessage(
           "<br/>"
         );
 
-
+    /*
+     * Group list items.
+     */
     formatted =
       formatted.replace(
-        /(<li>.*?<\/li>)/gis,
-        "<ul>$1</ul>"
-      );
+        /((?:<li>.*?<\/li><br\/>?)*)/gis,
+        match => {
 
+          if (
+            match.includes("<li>")
+          ) {
+            return `<ul>${match}</ul>`;
+          }
+
+          return match;
+        }
+      );
 
     div.innerHTML =
       formatted;
 
 
-    /*
-     * Action toolbar.
-     */
+    /* -------------------------------------------------------
+       ACTION TOOLBAR
+       ------------------------------------------------------- */
 
     const actionsDiv =
       document.createElement(
@@ -2173,21 +2307,27 @@ function appendMessage(
       "flex items-center gap-3 mt-3 pt-2 border-t border-slate-700/40 text-[11px] font-semibold text-slate-400";
 
 
-    /*
-     * Audio
-     */
+    /* AUDIO */
 
     const speakBtn =
       document.createElement(
         "button"
       );
 
+    speakBtn.type =
+      "button";
+
     speakBtn.className =
       "hover:text-sky-300 flex items-center gap-1 transition-colors";
 
     speakBtn.innerHTML =
-      `<i data-lucide="volume-2" class="w-3.5 h-3.5 text-sky-400"></i>
-       <span>Audio</span>`;
+      `
+        <i
+          data-lucide="volume-2"
+          class="w-3.5 h-3.5 text-sky-400"
+        ></i>
+        <span>Audio</span>
+      `;
 
     speakBtn.onclick =
       () => {
@@ -2198,7 +2338,7 @@ function appendMessage(
         ) {
 
           window.voiceManager.speakText(
-            text,
+            String(text || ""),
             appState.currentLang
           );
 
@@ -2212,21 +2352,27 @@ function appendMessage(
       };
 
 
-    /*
-     * Copy
-     */
+    /* COPY */
 
     const copyBtn =
       document.createElement(
         "button"
       );
 
+    copyBtn.type =
+      "button";
+
     copyBtn.className =
       "hover:text-sky-300 flex items-center gap-1 transition-colors";
 
     copyBtn.innerHTML =
-      `<i data-lucide="copy" class="w-3.5 h-3.5 text-slate-400"></i>
-       <span>Copy</span>`;
+      `
+        <i
+          data-lucide="copy"
+          class="w-3.5 h-3.5 text-slate-400"
+        ></i>
+        <span>Copy</span>
+      `;
 
     copyBtn.onclick =
       async () => {
@@ -2234,7 +2380,7 @@ function appendMessage(
         try {
 
           await navigator.clipboard.writeText(
-            text
+            String(text || "")
           );
 
           showNotification(
@@ -2242,6 +2388,11 @@ function appendMessage(
           );
 
         } catch (error) {
+
+          console.warn(
+            "Clipboard copy failed:",
+            error
+          );
 
           showNotification(
             "Could not copy advisory.",
@@ -2251,30 +2402,38 @@ function appendMessage(
       };
 
 
-    /*
-     * WhatsApp
-     */
+    /* WHATSAPP */
 
     const waBtn =
       document.createElement(
         "button"
       );
 
+    waBtn.type =
+      "button";
+
     waBtn.className =
       "hover:text-emerald-300 flex items-center gap-1 transition-colors text-emerald-400";
 
     waBtn.innerHTML =
-      `<i data-lucide="share-2" class="w-3.5 h-3.5"></i>
-       <span>WhatsApp</span>`;
+      `
+        <i
+          data-lucide="share-2"
+          class="w-3.5 h-3.5"
+        ></i>
+        <span>WhatsApp</span>
+      `;
 
     waBtn.onclick =
       () => {
 
         const message =
-          `🌾 WeatherGPT Advisory for ${appState.currentLocation.name}:\n\n${text}`;
+          `🌾 WeatherGPT Advisory for ${appState.currentLocation.name}:\n\n${String(text || "")}`;
 
         const waUrl =
-          `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+          `https://api.whatsapp.com/send?text=${encodeURIComponent(
+            message
+          )}`;
 
         window.open(
           waUrl,
@@ -2306,15 +2465,25 @@ function appendMessage(
     div
   );
 
-  chatMessages.scrollTop =
-    chatMessages.scrollHeight;
+  /*
+   * Always scroll to newest message.
+   */
+  requestAnimationFrame(() => {
+
+    chatMessages.scrollTop =
+      chatMessages.scrollHeight;
+
+  });
 
 
   if (
     typeof lucide !== "undefined"
   ) {
+
     lucide.createIcons();
   }
+
+  return div;
 }
 
 
@@ -2325,18 +2494,16 @@ function appendMessage(
 function appendTypingIndicator() {
 
   const chatMessages =
-    document.getElementById(
-      "chat-messages"
-    );
+    getChatMessagesContainer();
 
   if (!chatMessages) {
     return null;
   }
 
-
   const id =
-    `typing-${Date.now()}`;
-
+    `typing-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
 
   const div =
     document.createElement(
@@ -2360,14 +2527,16 @@ function appendTypingIndicator() {
       </span>
     `;
 
-
   chatMessages.appendChild(
     div
   );
 
-  chatMessages.scrollTop =
-    chatMessages.scrollHeight;
+  requestAnimationFrame(() => {
 
+    chatMessages.scrollTop =
+      chatMessages.scrollHeight;
+
+  });
 
   return id;
 }
@@ -2406,9 +2575,7 @@ function toggleVoiceInput(
     );
 
 
-  if (
-    !window.voiceManager
-  ) {
+  if (!window.voiceManager) {
 
     showNotification(
       "Voice manager unavailable.",
@@ -2431,6 +2598,7 @@ function toggleVoiceInput(
       );
 
     if (btnText) {
+
       btnText.textContent =
         "Voice Query";
     }
@@ -2445,6 +2613,7 @@ function toggleVoiceInput(
     );
 
   if (btnText) {
+
     btnText.textContent =
       "Listening...";
   }
@@ -2457,6 +2626,7 @@ function toggleVoiceInput(
     transcript => {
 
       if (targetInput) {
+
         targetInput.value =
           transcript;
       }
@@ -2466,6 +2636,7 @@ function toggleVoiceInput(
       );
 
       if (targetInput) {
+
         targetInput.value =
           "";
       }
@@ -2479,6 +2650,7 @@ function toggleVoiceInput(
         );
 
       if (btnText) {
+
         btnText.textContent =
           "Voice Query";
       }
@@ -2492,6 +2664,7 @@ function toggleVoiceInput(
         );
 
       if (btnText) {
+
         btnText.textContent =
           "Voice Query";
       }
@@ -2523,10 +2696,8 @@ function renderDossierContent() {
     return;
   }
 
-
   const d =
     appState.weatherData;
-
 
   content.innerHTML =
     `
@@ -2543,26 +2714,25 @@ function renderDossierContent() {
             <span
               class="text-sm font-bold text-white"
             >
-              ${escapeHtml(d.location.name)},
-              ${escapeHtml(d.location.state)}
+              ${escapeHtml(d.location?.name)},
+              ${escapeHtml(d.location?.state)}
             </span>
 
             <span
               class="text-slate-400 block text-[11px]"
             >
               Coordinates:
-              ${Number(d.location.lat).toFixed(4)}°N,
-              ${Number(d.location.lon).toFixed(4)}°E
+              ${Number(d.location?.lat || 0).toFixed(4)}°N,
+              ${Number(d.location?.lon || 0).toFixed(4)}°E
             </span>
 
           </div>
 
-
           <span
             class="px-2.5 py-1 rounded bg-sky-950 text-sky-300 font-mono text-xs font-bold"
           >
-            ${d.current.temp}°C
-            (${escapeHtml(d.current.condition)})
+            ${escapeHtml(d.current?.temp)}°C
+            (${escapeHtml(d.current?.condition)})
           </span>
 
         </div>
@@ -2585,7 +2755,7 @@ function renderDossierContent() {
             <span
               class="font-bold text-white"
             >
-              ${d.current.humidity}%
+              ${escapeHtml(d.current?.humidity)}%
             </span>
 
           </div>
@@ -2604,9 +2774,9 @@ function renderDossierContent() {
             <span
               class="font-bold text-white"
             >
-              ${d.current.windSpeed}
+              ${escapeHtml(d.current?.windSpeed)}
               km/h
-              (${d.current.windCardinal})
+              (${escapeHtml(d.current?.windCardinal)})
             </span>
 
           </div>
@@ -2625,8 +2795,8 @@ function renderDossierContent() {
             <span
               class="font-bold text-amber-400"
             >
-              ${d.aqi.value}
-              (${escapeHtml(d.aqi.category)})
+              ${escapeHtml(d.aqi?.value)}
+              (${escapeHtml(d.aqi?.category)})
             </span>
 
           </div>
@@ -2646,7 +2816,7 @@ function renderDossierContent() {
 
           <p>
             ${
-              d.agriculture.isSpraySafe
+              d.agriculture?.isSpraySafe
                 ? "✅ Current conditions are suitable for spraying."
                 : "⚠️ Current conditions are unfavorable for spraying."
             }
@@ -2666,9 +2836,9 @@ function renderDossierContent() {
           </span>
 
           <p>
-            ${escapeHtml(d.imdAlert.title)}
+            ${escapeHtml(d.imdAlert?.title)}
             -
-            ${escapeHtml(d.imdAlert.desc)}
+            ${escapeHtml(d.imdAlert?.desc)}
           </p>
 
         </div>
@@ -2725,15 +2895,12 @@ function showNotification(
         : "bg-sky-950 border-sky-500 text-sky-200"
     );
 
-
   toast.textContent =
     message;
-
 
   document.body.appendChild(
     toast
   );
-
 
   setTimeout(
     () => {
@@ -2800,3 +2967,9 @@ window.updateWeatherUI =
 
 window.loadWeather =
   loadWeather;
+
+window.handleUserChatMessage =
+  handleUserChatMessage;
+
+window.appendMessage =
+  appendMessage;
