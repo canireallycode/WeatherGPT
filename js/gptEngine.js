@@ -143,7 +143,14 @@ class GPTEngine {
     const curr = weatherData.current;
     const aqi = weatherData.aqi;
     const agri = weatherData.agriculture;
-    const disaster = weatherData.disaster;
+    const disaster = weatherData.disaster || {
+  alertLevel: 'normal',
+  alertMessage: 'No active weather alert.',
+  floodRiskScore: 0,
+  heatwaveRisk: 'Low'
+};
+  
+   
 
     // Determine query intent
     const isSpray = p.includes('spray') || p.includes('pesticide') || p.includes('कीटनाशक') || p.includes('फवारणी') || p.includes('fertilizer') || p.includes('खाद');
