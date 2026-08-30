@@ -1,6 +1,7 @@
 /* =========================================================
    WeatherGPT - Map Service
-   OpenStreetMap + Leaflet
+   Real OpenStreetMap + Leaflet
+   Optional RainViewer Radar Overlay
    ========================================================= */
 
 (function () {
@@ -24,10 +25,10 @@
     lon: 77.2090
   };
 
-  /*
-   * Official OpenStreetMap tile server.
-   * Visible attribution is required.
-   */
+  /* =========================================================
+     OPENSTREETMAP
+     ========================================================= */
+
   const OSM_TILE_URL =
     "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 
@@ -35,7 +36,7 @@
     '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>';
 
   /* =========================================================
-     CREATE BASE MAP
+     CREATE MAP
      ========================================================= */
 
   function createMap(containerId, lat, lon, zoom) {
@@ -43,11 +44,11 @@
     const container = document.getElementById(containerId);
 
     if (!container) {
-      console.warn(`Map container #${containerId} not found.`);
+      console.warn("Map container not found:", containerId);
       return null;
     }
 
-    // Prevent Leaflet from initializing twice on the same element
+    // Prevent Leaflet from initializing twice
     if (container._leaflet_id) {
       return null;
     }
@@ -59,9 +60,7 @@
       attributionControl: true
     });
 
-    /*
-     * Real OpenStreetMap tiles
-     */
+    /* Real OpenStreetMap tiles */
     L.tileLayer(OSM_TILE_URL, {
       maxZoom: 19,
       attribution: OSM_ATTRIBUTION
@@ -71,12 +70,20 @@
   }
 
   /* =========================================================
-     CREATE WEATHER MARKER
+     WEATHER MARKER
      ========================================================= */
 
-  function createWeatherMarker(targetMap, lat, lon, name, temperature) {
+  function createWeatherMarker(
+    targetMap,
+    lat,
+    lon,
+    name,
+    temperature
+  ) {
 
-    if (!targetMap) return null;
+    if (!targetMap) {
+      return null;
+    }
 
     const weatherIcon = L.divIcon({
       className: "weather-map-marker",
@@ -107,7 +114,9 @@
 
     const newMarker = L.marker(
       [lat, lon],
-      { icon: weatherIcon }
+      {
+        icon: weatherIcon
+      }
     ).addTo(targetMap);
 
     newMarker.bindPopup(`
@@ -115,6 +124,7 @@
         min-width:180px;
         font-family:Arial,sans-serif;
       ">
+
         <h3 style="
           margin:0 0 6px;
           font-size:18px;
@@ -129,7 +139,11 @@
           color:#475569;
           margin-bottom:6px;
         ">
-          ${temperature !== undefined ? `${temperature}°C` : "Weather Station"}
+          ${
+            temperature !== undefined
+              ? `${temperature}°C`
+              : "Weather Station"
+          }
         </div>
 
         <div style="
@@ -139,6 +153,7 @@
         ">
           📍 Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}
         </div>
+
       </div>
     `);
 
@@ -146,7 +161,7 @@
   }
 
   /* =========================================================
-     LOAD MAIN MAP
+     INITIALIZE MAIN MAP
      ========================================================= */
 
   function initializeMainMap() {
@@ -162,7 +177,9 @@
       9
     );
 
-    if (!map) return;
+    if (!map) {
+      return;
+    }
 
     marker = createWeatherMarker(
       map,
@@ -172,10 +189,7 @@
       33
     );
 
-    /*
-     * District inspection.
-     * Click anywhere on the map to show coordinates.
-     */
+    /* Click anywhere on map */
     map.on("click", function (event) {
 
       const lat = event.latlng.lat;
@@ -188,11 +202,19 @@
             font-family:Arial,sans-serif;
             min-width:170px;
           ">
+
             <strong>Selected Location</strong>
+
             <br><br>
-            📍 Latitude: ${lat.toFixed(4)}
+
+            📍 Latitude:
+            ${lat.toFixed(4)}
+
             <br>
-            📍 Longitude: ${lon.toFixed(4)}
+
+            📍 Longitude:
+            ${lon.toFixed(4)}
+
           </div>
         `)
         .openOn(map);
@@ -200,7 +222,7 @@
   }
 
   /* =========================================================
-     LOAD FULL RADAR MAP
+     INITIALIZE FULL RADAR MAP
      ========================================================= */
 
   function initializeFullMap() {
@@ -216,7 +238,9 @@
       8
     );
 
-    if (!fullMap) return;
+    if (!fullMap) {
+      return;
+    }
 
     fullMarker = createWeatherMarker(
       fullMap,
@@ -239,7 +263,14 @@
     temperature
   ) {
 
-    if (!lat || !lon) return;
+    if (
+      lat === undefined ||
+      lon === undefined ||
+      lat === null ||
+      lon === null
+    ) {
+      return;
+    }
 
     const location = {
       name: name || "Selected Location",
@@ -248,14 +279,17 @@
       lon: Number(lon)
     };
 
-    /*
-     * MAIN MAP
-     */
+    /* =====================================================
+       MAIN MAP
+       ===================================================== */
 
     if (map) {
 
       map.setView(
-        [location.lat, location.lon],
+        [
+          location.lat,
+          location.lon
+        ],
         10,
         {
           animate: true
@@ -275,14 +309,17 @@
       );
     }
 
-    /*
-     * FULL MAP
-     */
+    /* =====================================================
+       FULL MAP
+       ===================================================== */
 
     if (fullMap) {
 
       fullMap.setView(
-        [location.lat, location.lon],
+        [
+          location.lat,
+          location.lon
+        ],
         10,
         {
           animate: true
@@ -302,9 +339,9 @@
       );
     }
 
-    /*
-     * Update coordinate badge in HTML
-     */
+    /* =====================================================
+       UPDATE COORDINATE BADGE
+       ===================================================== */
 
     const coordinateBadge =
       document.getElementById("map-coord-badge");
@@ -349,14 +386,16 @@
           lon
         );
 
-        /*
-         * Accuracy circle
-         */
+        /* =================================================
+           MAIN MAP ACCURACY CIRCLE
+           ================================================= */
 
         if (map) {
 
           if (accuracyCircle) {
-            map.removeLayer(accuracyCircle);
+            map.removeLayer(
+              accuracyCircle
+            );
           }
 
           accuracyCircle =
@@ -365,13 +404,21 @@
               {
                 radius:
                   position.coords.accuracy || 100,
+
                 color: "#38bdf8",
+
                 fillColor: "#38bdf8",
+
                 fillOpacity: 0.12,
+
                 weight: 2
               }
             ).addTo(map);
         }
+
+        /* =================================================
+           FULL MAP ACCURACY CIRCLE
+           ================================================= */
 
         if (fullMap) {
 
@@ -387,9 +434,13 @@
               {
                 radius:
                   position.coords.accuracy || 100,
+
                 color: "#38bdf8",
+
                 fillColor: "#38bdf8",
+
                 fillOpacity: 0.12,
+
                 weight: 2
               }
             ).addTo(fullMap);
@@ -412,38 +463,33 @@
 
       {
         enableHighAccuracy: true,
+
         timeout: 10000,
+
         maximumAge: 300000
       }
     );
   }
 
   /* =========================================================
-     RADAR LAYER
+     RAINVIEWER RADAR
      ========================================================= */
 
   function loadRadarLayer() {
 
-    /*
-     * This is optional.
-     *
-     * The normal OpenStreetMap layer above
-     * remains the actual geographic map.
-     */
-
-    const targetMap = fullMap || map;
+    const targetMap =
+      fullMap || map;
 
     if (!targetMap) {
+
       console.warn(
         "Map is not initialized yet."
       );
+
       return;
     }
 
-    /*
-     * Remove previous radar layer
-     */
-
+    /* Remove existing radar */
     if (radarLayer) {
 
       targetMap.removeLayer(
@@ -453,17 +499,16 @@
       radarLayer = null;
     }
 
-    /*
-     * RainViewer radar API
-     */
+    /* Fetch latest RainViewer radar frame */
 
     fetch(
       "https://api.rainviewer.com/public/weather-maps.json"
     )
 
-      .then(response => {
+      .then(function (response) {
 
         if (!response.ok) {
+
           throw new Error(
             "Radar request failed"
           );
@@ -472,7 +517,7 @@
         return response.json();
       })
 
-      .then(data => {
+      .then(function (data) {
 
         if (
           !data ||
@@ -488,9 +533,7 @@
           return;
         }
 
-        /*
-         * Get latest available radar frame
-         */
+        /* Latest radar frame */
 
         const latest =
           data.radar.past[
@@ -500,9 +543,7 @@
         const timestamp =
           latest.time;
 
-        /*
-         * RainViewer radar tile
-         */
+        /* RainViewer tile URL */
 
         const radarURL =
           `https://tilecache.rainviewer.com` +
@@ -513,7 +554,9 @@
             radarURL,
             {
               opacity: 0.55,
+
               maxZoom: 19,
+
               attribution:
                 'Radar © <a href="https://www.rainviewer.com/" target="_blank" rel="noopener noreferrer">RainViewer</a>'
             }
@@ -522,10 +565,9 @@
         radarLayer.addTo(
           targetMap
         );
-
       })
 
-      .catch(error => {
+      .catch(function (error) {
 
         console.error(
           "Radar error:",
@@ -567,22 +609,27 @@
   function escapeHTML(value) {
 
     return String(value)
+
       .replace(
         /&/g,
         "&amp;"
       )
+
       .replace(
         /</g,
         "&lt;"
       )
+
       .replace(
         />/g,
         "&gt;"
       )
+
       .replace(
         /"/g,
         "&quot;"
       )
+
       .replace(
         /'/g,
         "&#039;"
@@ -590,12 +637,16 @@
   }
 
   /* =========================================================
-     PUBLIC API
+     PUBLIC MAP API
      ========================================================= */
 
   window.mapService = {
 
-    initialize: initializeMainMap,
+    initialize:
+      initializeMainMap,
+
+    initializeMainMap:
+      initializeMainMap,
 
     initializeFullMap:
       initializeFullMap,
@@ -614,7 +665,7 @@
   };
 
   /* =========================================================
-     START MAPS AFTER PAGE LOAD
+     START MAP AFTER PAGE LOAD
      ========================================================= */
 
   document.addEventListener(
@@ -622,11 +673,6 @@
     function () {
 
       initializeMainMap();
-
-      /*
-       * Full radar map is created only when
-       * its container exists.
-       */
 
       if (
         document.getElementById(
